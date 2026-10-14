@@ -1,0 +1,4237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>深渊手稿 - CODEX ABYSSUS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    display: flex; justify-content: center; align-items: center;
+    height: 100vh; overflow: hidden;
+    font-family: 'Georgia', 'Times New Roman', serif;
+  }
+  canvas { display: block; image-rendering: auto; }
+  #ui-overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+<script>
+// ============================================================
+//  深渊手稿 CODEX ABYSSUS - 卡牌肉鸽游戏
+//  艺术风格：诡谲·怪诞·迷幻·神秘学
+//  参考：《伏尼契手稿》/ 明日方舟黑流树海 / 《湮灭》
+// ============================================================
+
+// ==================== 全局常量 ====================
+const GAME_W = 1280;
+const GAME_H = 720;
+const CARD_W = 140;
+const CARD_H = 200;
+const COLORS = {
+  bg:        '#0a0a10',
+  bgLight:   '#12121f',
+  panel:     '#16162a',
+  panelEdge: '#2a1a3a',
+  gold:      '#c9a84c',
+  goldDim:   '#7a6530',
+  goldBright:'#f0d060',
+  red:       '#8b2020',
+  redBright: '#d04040',
+  blue:      '#3040a0',
+  blueBright:'#6080e0',
+  green:     '#2a6a2a',
+  greenBright:'#40a040',
+  purple:    '#5a2a7a',
+  purpleBright:'#9060c0',
+  orange:    '#b86020',
+  orangeBright:'#e08040',
+  white:     '#d0d0d0',
+  whiteDim:  '#808090',
+  combo:     '#ff6020',
+  poison:    '#40c040',
+  burn:      '#ff6020',
+  freeze:    '#60c0ff',
+  stun:      '#ffd040',
+  text:      '#c8c0b8',
+  textDim:   '#706860',
+};
+// 颜色辅助函数：将hex颜色字符串转为{r,g,b}对象
+function hexToRgb(hex) {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  return { r: parseInt(h.substring(0,2), 16), g: parseInt(h.substring(2,4), 16), b: parseInt(h.substring(4,6), 16) };
+}
+// 预计算所有颜色的RGB值
+const COLORS_RGB = {};
+for (let [k, v] of Object.entries(COLORS)) {
+  if (typeof v === 'string' && v.startsWith('#')) COLORS_RGB[k] = hexToRgb(v);
+  else COLORS_RGB[k] = v;
+}
+// 安全fill：cFill(颜色名, [alpha])
+function cFill(colorName, alpha) {
+  let c = COLORS_RGB[colorName];
+  if (c === undefined) { fill(colorName); return; }
+  if (typeof c === 'object') {
+    if (alpha !== undefined) fill(c.r, c.g, c.b, alpha);
+    else fill(c.r, c.g, c.b);
+  } else fill(c);
+}
+// 安全stroke：cStroke(颜色名, [alpha])
+function cStroke(colorName, alpha) {
+  let c = COLORS_RGB[colorName];
+  if (c === undefined) { stroke(colorName); return; }
+  if (typeof c === 'object') {
+    if (alpha !== undefined) stroke(c.r, c.g, c.b, alpha);
+    else stroke(c.r, c.g, c.b);
+  } else stroke(c);
+}
+// 安全fill原始值：cFillRaw(颜色名, [alpha])
+function cFillRaw(colorName, alpha) {
+  let c = COLORS_RGB[colorName];
+  if (c === undefined) return null;
+  if (alpha !== undefined) return { r: c.r, g: c.g, b: c.b, a: alpha };
+  return { r: c.r, g: c.g, b: c.b };
+}
+// 安全stroke原始值：cStrokeRaw(颜色名, [alpha])
+function cStrokeRaw(colorName, alpha) {
+  return cFillRaw(colorName, alpha);
+}
+
+const KEYWORDS = {
+  FIRST_STRIKE: '先攻',
+  COMBO:        '连击',
+  SMASH:        '猛击',
+  INTIMIDATE:   '震慑',
+  ANOMALY:      '异常',
+  FLOW:         '流转',
+};
+
+// ==================== 游戏配置数据 ====================
+
+// --- 卡牌数据 ---
+// 特性系统: 先攻/连击/猛击/震慑/异常/流转 以行动点-连击为核心
+const CARD_DATA = [
+  {
+    id: 'strike', name: '斩击', cost: 1, type: 'attack',
+    baseDmg: 6, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害',
+    keywords: [], // 无特性，基础卡
+    rarity: 'basic', color: '#a0a0a0',
+  },
+  {
+    id: 'defend', name: '防御', cost: 1, type: 'skill',
+    baseDmg: 0, baseBlock: 5,
+    desc: '获得 {block} 点格挡',
+    keywords: [], rarity: 'basic', color: '#6080c0',
+  },
+  {
+    id: 'quick_strike', name: '先发制人', cost: 1, type: 'attack',
+    baseDmg: 4, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。先攻：启动3张连击窗口',
+    keywords: ['先攻'],
+    rarity: 'common', color: '#c0a060',
+  },
+  {
+    id: 'flurry', name: '连斩', cost: 1, type: 'attack',
+    baseDmg: 3, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。连击：伤害+{combo_bonus}',
+    keywords: ['连击'],
+    comboBonus: 3,
+    rarity: 'common', color: '#e08040',
+  },
+  {
+    id: 'combo_defense', name: '连防', cost: 1, type: 'skill',
+    baseDmg: 0, baseBlock: 3,
+    desc: '获得 {block} 点格挡。连击：格挡+{combo_block}',
+    keywords: ['连击'],
+    comboBlock: 3,
+    rarity: 'common', color: '#6080c0',
+  },
+  {
+    id: 'heavy_smash', name: '重击粉碎', cost: 2, type: 'attack',
+    baseDmg: 8, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。猛击：消耗连击，每层+{combo_scale}伤',
+    keywords: ['猛击'],
+    comboScale: 5, threshold: 5, thresholdBonus: 10,
+    rarity: 'common', color: '#d04040',
+  },
+  {
+    id: 'terror_glare', name: '恐惧凝视', cost: 1, type: 'skill',
+    baseDmg: 2, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。震慑：消耗连击限制敌人行动',
+    keywords: ['震慑'],
+    comboScale: 2, stunPerCombo: 1,
+    rarity: 'uncommon', color: '#c080c0',
+  },
+  {
+    id: 'burn_touch', name: '灼烧之触', cost: 1, type: 'attack',
+    baseDmg: 3, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。异常：施加{burn}层灼烧',
+    keywords: ['异常'],
+    statusType: 'burn', statusAmt: 3,
+    rarity: 'common', color: '#e06020',
+  },
+  {
+    id: 'frost_wave', name: '霜冻波', cost: 1, type: 'skill',
+    baseDmg: 2, baseBlock: 2,
+    desc: '造成 {dmg} 点伤害，获得{block}格挡。异常：施加{freeze}层冻结',
+    keywords: ['异常'],
+    statusType: 'freeze', statusAmt: 2,
+    rarity: 'common', color: '#60a0d0',
+  },
+  {
+    id: 'corrosive_mist', name: '腐蚀迷雾', cost: 1, type: 'skill',
+    baseDmg: 2, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。异常：施加{corrode}层腐蚀',
+    keywords: ['异常'],
+    statusType: 'corrode', statusAmt: 4,
+    rarity: 'common', color: '#40a040',
+  },
+  {
+    id: 'flow_recovery', name: '流转恢复', cost: 1, type: 'skill',
+    baseDmg: 0, baseBlock: 3,
+    desc: '获得{block}格挡。流转：若前张为猛击，回复AP并抽牌',
+    keywords: ['流转'],
+    apRestorePerCombo: 0.4, drawCards: 2, threshold: 5, thresholdExtraAp: 1,
+    rarity: 'uncommon', color: '#60c0a0',
+  },
+  {
+    id: 'flow_blade', name: '流转之刃', cost: 1, type: 'attack',
+    baseDmg: 4, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。流转：若前张为连击，算作连击且额外+{combo_bonus}连击',
+    keywords: ['流转'],
+    comboBonus: 2,
+    rarity: 'uncommon', color: '#60c0a0',
+  },
+  {
+    id: 'dual_strike', name: '双重打击', cost: 2, type: 'attack',
+    baseDmg: 4, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害2次。连击+先攻',
+    keywords: ['连击', '先攻'],
+    hits: 2, comboBonus: 2,
+    rarity: 'uncommon', color: '#d0a040',
+  },
+  {
+    id: 'venom_strike', name: '毒刃', cost: 1, type: 'attack',
+    baseDmg: 4, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。连击+异常：施加{poison}层腐蚀',
+    keywords: ['连击', '异常'],
+    statusType: 'corrode', statusAmt: 2, comboBonus: 2,
+    rarity: 'uncommon', color: '#80c040',
+  },
+  {
+    id: 'finishing_blow', name: '终结一击', cost: 2, type: 'attack',
+    baseDmg: 12, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。猛击：消耗连击每层+{combo_scale}伤。若敌人生命低于50%，伤害翻倍',
+    keywords: ['猛击'],
+    comboScale: 6, threshold: 4, thresholdBonus: 15,
+    executeThreshold: 0.5, executeMultiplier: 2,
+    rarity: 'rare', color: '#ff4040',
+  },
+  {
+    id: 'time_lock', name: '时间锁链', cost: 2, type: 'skill',
+    baseDmg: 3, baseBlock: 5,
+    desc: '造成 {dmg} 点伤害，获得{block}格挡。震慑：消耗连击，每层+1震慑',
+    keywords: ['震慑'],
+    comboScale: 1, stunPerCombo: 2,
+    rarity: 'rare', color: '#c080ff',
+  },
+  {
+    id: 'inferno', name: '炼狱', cost: 3, type: 'attack',
+    baseDmg: 6, baseBlock: 0,
+    desc: '造成 {dmg} 点伤害。猛击+异常：消耗连击，每层+{combo_scale}伤并施加灼烧',
+    keywords: ['猛击', '异常'],
+    comboScale: 4, threshold: 4, thresholdBonus: 12,
+    statusType: 'burn', statusAmt: 2, statusPerCombo: 1,
+    rarity: 'rare', color: '#ff6020',
+  },
+  {
+    id: 'perfect_flow', name: '完美流转', cost: 0, type: 'skill',
+    baseDmg: 0, baseBlock: 0,
+    desc: '流转：若前张为猛击，回复AP+抽牌+保留50%连击；若为连击，连击计数翻倍',
+    keywords: ['流转'],
+    apRestorePerCombo: 0.5, drawCards: 3, retainCombo: 0.5,
+    threshold: 6, thresholdExtraAp: 2,
+    comboDouble: true,
+    rarity: 'rare', color: '#40e0a0',
+  },
+  {
+    id: 'adrenaline', name: '肾上腺素', cost: 0, type: 'skill',
+    baseDmg: 0, baseBlock: 0,
+    desc: '获得2点行动点，抽2张牌。消耗',
+    keywords: [], exhaust: true,
+    rarity: 'uncommon', color: '#e0e060',
+    extraAp: 2, extraDraw: 2,
+  },
+  {
+    id: 'blood_sacrifice', name: '血之献祭', cost: 0, type: 'skill',
+    baseDmg: 0, baseBlock: 0,
+    desc: '失去3点生命，获得2点AP，抽3张牌',
+    keywords: [],
+    hpCost: 3, extraAp: 2, extraDraw: 3,
+    rarity: 'uncommon', color: '#c04040',
+  },
+];
+
+// --- 敌人数据 ---
+const ENEMY_DATA = {
+  // 第一层敌人
+  void_spawn: {
+    id: 'void_spawn', name: '虚空幼体', hp: 30, maxHp: 30,
+    intentPattern: ['attack', 'attack', 'defend'],
+    attackDmg: 6, blockAmt: 4, ap: 1,
+    desc: '来自深渊裂隙的畸形生物，扭曲的肢体不断蠕动',
+    color: '#6040a0', size: 60,
+    // 特殊AI
+    specialChance: 0.3,
+    special: { type: 'buff', buffType: 'strength', amt: 2 },
+  },
+  flesh_weaver: {
+    id: 'flesh_weaver', name: '血肉编织者', hp: 40, maxHp: 40,
+    intentPattern: ['attack', 'defend', 'attack'],
+    attackDmg: 8, blockAmt: 6, ap: 1,
+    desc: '由无数血肉触须编织而成的人形生物，散发着腐败的气息',
+    color: '#803040', size: 65,
+    specialChance: 0.25,
+    special: { type: 'heal', amt: 5 },
+  },
+  // 第一层精英
+  bound_abomination: {
+    id: 'bound_abomination', name: '缚咒憎恶', hp: 70, maxHp: 70,
+    intentPattern: ['attack', 'attack', 'defend', 'special'],
+    attackDmg: 10, blockAmt: 8, ap: 1,
+    desc: '被远古符文束缚的巨型憎恶，每一次攻击都带着诅咒之力',
+    color: '#a03060', size: 80,
+    specialChance: 0.4,
+    special: { type: 'debuff', debuffType: 'vulnerable', amt: 2 },
+    isElite: true,
+  },
+  // 第二层敌人
+  rune_guardian: {
+    id: 'rune_guardian', name: '符文守卫', hp: 50, maxHp: 50,
+    intentPattern: ['defend', 'attack', 'attack'],
+    attackDmg: 10, blockAmt: 8, ap: 2,
+    desc: '由古老符文构成的守卫，眼中闪烁着不祥的光芒',
+    color: '#4060c0', size: 70,
+    specialChance: 0.3,
+    special: { type: 'attack', dmg: 14 },
+  },
+  mind_devourer: {
+    id: 'mind_devourer', name: '噬心者', hp: 45, maxHp: 45,
+    intentPattern: ['attack', 'special', 'attack'],
+    attackDmg: 8, blockAmt: 4, ap: 2,
+    desc: '以心智为食的恐怖存在，靠近它便会感到意识模糊',
+    color: '#8060a0', size: 65,
+    specialChance: 0.35,
+    special: { type: 'debuff', debuffType: 'weak', amt: 2 },
+  },
+  // 第二层精英
+  nightmare_knight: {
+    id: 'nightmare_knight', name: '噩梦骑士', hp: 90, maxHp: 90,
+    intentPattern: ['attack', 'defend', 'attack', 'special'],
+    attackDmg: 14, blockAmt: 12, ap: 2,
+    desc: '身披黑色铠甲的噩梦骑士，剑上缠绕着无尽的怨念',
+    color: '#402060', size: 85,
+    specialChance: 0.4,
+    special: { type: 'attack', dmg: 22 },
+    isElite: true,
+  },
+  // 第三层Boss
+  codex_abyssus: {
+    id: 'codex_abyssus', name: '深渊手稿·真名', hp: 150, maxHp: 150,
+    intentPattern: ['attack', 'defend', 'attack', 'special', 'attack'],
+    attackDmg: 12, blockAmt: 10, ap: 2,
+    desc: '伏尼契手稿中记载的终极存在，知晓一切却无法被理解',
+    color: '#000000', size: 100,
+    specialChance: 0.5,
+    special: { type: 'attack', dmg: 20 },
+    isBoss: true,
+    bossPhase2: { hpThreshold: 75, attackDmg: 16, ap: 3 },
+  },
+};
+
+// --- 遗物数据 ---
+const RELIC_DATA = [
+  {
+    id: 'combo_amulet', name: '连击护符',
+    desc: '每场战斗开始时，获得2层连击',
+    rarity: 'common',
+    onCombatStart: (gs) => { gs.combatState.comboCount = 2; },
+    icon: '◇',
+  },
+  {
+    id: 'ap_tome', name: '行动典籍',
+    desc: '每回合额外获得1点行动点',
+    rarity: 'uncommon',
+    modifyMaxAp: 1,
+    icon: '◆',
+  },
+  {
+    id: 'blood_ruby', name: '血玉髓',
+    desc: '每当你造成伤害时，回复1点生命',
+    rarity: 'rare',
+    onDealDamage: (gs, dmg) => { gs.heal(1); },
+    icon: '●',
+  },
+  {
+    id: 'first_strike_charm', name: '先攻之印',
+    desc: '所有卡牌获得"先攻"特性',
+    rarity: 'rare',
+    onBattleStart: (gs) => { /* 在战斗逻辑中处理 */ },
+    icon: '◈',
+  },
+  {
+    id: 'combo_engine', name: '连击引擎',
+    desc: '每当你触发连击时，额外+1连击计数',
+    rarity: 'uncommon',
+    onComboTrigger: (gs) => { gs.combatState.comboCount += 1; },
+    icon: '⚙',
+  },
+  {
+    id: 'void_mask', name: '虚空面具',
+    desc: '每场战斗，敌人首次攻击伤害减半',
+    rarity: 'common',
+    onCombatStart: (gs) => { gs.combatState.enemyFirstAttackHalved = true; },
+    icon: '◉',
+  },
+  {
+    id: 'golden_scales', name: '黄金天平',
+    desc: '商店所有物品价格降低25%',
+    rarity: 'uncommon',
+    modifyShopDiscount: 0.25,
+    icon: '⚖',
+  },
+  {
+    id: 'flow_catalyst', name: '流转催化剂',
+    desc: '流转特性回复的AP+1',
+    rarity: 'uncommon',
+    modifyFlowAp: 1,
+    icon: '✧',
+  },
+  {
+    id: 'smash_hammer', name: '粉碎之锤',
+    desc: '猛击特性的基础伤害+50%',
+    rarity: 'rare',
+    modifySmashDmg: 0.5,
+    icon: '⚒',
+  },
+  {
+    id: 'philosopher_stone', name: '贤者之石',
+    desc: '每场战斗开始时，所有敌人受到10点伤害',
+    rarity: 'rare',
+    onCombatStart: (gs) => { gs.combatState.enemyPreDmg = 10; },
+    icon: '⬡',
+  },
+  {
+    id: 'serpent_ring', name: '衔尾蛇之戒',
+    desc: '每当你打出猛击消耗连击时，若消耗≥5层，回复消耗量一半的连击',
+    rarity: 'rare',
+    onSmashConsume: (gs, consumed) => { if(consumed>=5) gs.combatState.comboCount += Math.floor(consumed/2); },
+    icon: '⊙',
+  },
+  {
+    id: 'cursed_dice', name: '诅咒骰子',
+    desc: '每回合开始，随机获得0-2点AP（而非固定值）',
+    rarity: 'uncommon',
+    randomAp: true,
+    icon: '⯀',
+  },
+];
+
+// --- 事件数据 ---
+const EVENT_DATA = [
+  {
+    id: 'ancient_altar', name: '古老祭坛',
+    desc: '你发现了一座布满苔藓的古老祭坛，上面刻着无法辨认的文字。祭坛中央放着一本泛黄的手稿。',
+    choices: [
+      { text: '阅读手稿（获得随机遗物）', effect: 'gain_relic', risk: 'none' },
+      { text: '献上血液（失去10HP，获得一张稀有卡牌）', effect: 'blood_sacrifice', hpCost: 10, reward: 'rare_card' },
+      { text: '离开', effect: 'none' },
+    ],
+  },
+  {
+    id: 'mysterious_trader', name: '神秘商人',
+    desc: '一位戴着面具的神秘商人突然出现在你面前，他的斗篷下似乎没有实体。',
+    choices: [
+      { text: '交易（花费30金币，随机获得2张卡牌）', effect: 'trade', goldCost: 30, reward: '2_cards' },
+      { text: '接受"礼物"（免费获得一张卡牌，但可能被诅咒）', effect: 'cursed_gift' },
+      { text: '拒绝', effect: 'none' },
+    ],
+  },
+  {
+    id: 'void_pool', name: '虚空之池',
+    desc: '一池漆黑如墨的液体在月光下泛着微光，池中倒映着不属于这个世界的星空。',
+    choices: [
+      { text: '饮用池水（随机获得2个遗物，失去15HP）', effect: 'void_drink', hpCost: 15, reward: '2_relics' },
+      { text: '投入卡牌（移除一张卡牌）', effect: 'remove_card' },
+      { text: '离开', effect: 'none' },
+    ],
+  },
+  {
+    id: 'whispering_stones', name: '低语石碑',
+    desc: '路边的石碑发出微弱的低语，似乎在诉说着什么秘密。',
+    choices: [
+      { text: '倾听低语（升级一张随机卡牌）', effect: 'upgrade_random' },
+      { text: '摧毁石碑（获得50金币）', effect: 'gold', goldAmt: 50 },
+      { text: '记录下来（获得一张随机卡牌）', effect: 'gain_card' },
+    ],
+  },
+  {
+    id: 'flesh_garden', name: '血肉花园',
+    desc: '一片由血肉构成的诡异花园，花朵在微微跳动，仿佛有着自己的心跳。',
+    choices: [
+      { text: '摘取"果实"（回复30HP）', effect: 'heal', healAmt: 30 },
+      { text: '研究生态（失去5HP，永久+2最大HP）', effect: 'max_hp', hpCost: 5, maxHpGain: 2 },
+      { text: '一把火烧掉（获得燃烧相关卡牌）', effect: 'gain_burn_card' },
+    ],
+  },
+];
+
+// --- 地图配置 ---
+// 3层地图，每层多个节点，支持分支
+const MAP_CONFIG = {
+  layers: [
+    { // 第1层
+      nodes: [
+        { id: 'n1_1', type: 'battle', x: 0.25, y: 0.85 },
+        { id: 'n1_2', type: 'event', x: 0.5, y: 0.85 },
+        { id: 'n1_3', type: 'battle', x: 0.75, y: 0.85 },
+      ],
+      connections: [
+        ['n1_1', 'n2_1'], ['n1_1', 'n2_2'],
+        ['n1_2', 'n2_2'], ['n1_2', 'n2_3'],
+        ['n1_3', 'n2_3'], ['n1_3', 'n2_4'],
+      ],
+    },
+    { // 第2层
+      nodes: [
+        { id: 'n2_1', type: 'shop', x: 0.15, y: 0.55 },
+        { id: 'n2_2', type: 'battle', x: 0.38, y: 0.55 },
+        { id: 'n2_3', type: 'elite', x: 0.62, y: 0.55 },
+        { id: 'n2_4', type: 'treasure', x: 0.85, y: 0.55 },
+      ],
+      connections: [
+        ['n2_1', 'n3_1'], ['n2_2', 'n3_1'], ['n2_2', 'n3_2'],
+        ['n2_3', 'n3_2'], ['n2_3', 'n3_3'],
+        ['n2_4', 'n3_3'],
+      ],
+    },
+    { // 第3层 - Boss
+      nodes: [
+        { id: 'n3_1', type: 'event', x: 0.2, y: 0.25 },
+        { id: 'n3_2', type: 'rest', x: 0.5, y: 0.25 },
+        { id: 'n3_3', type: 'shop', x: 0.8, y: 0.25 },
+        { id: 'n3_boss', type: 'boss', x: 0.5, y: 0.08 },
+      ],
+      connections: [
+        ['n3_1', 'n3_boss'], ['n3_2', 'n3_boss'], ['n3_3', 'n3_boss'],
+      ],
+    },
+  ],
+};
+
+// ==================== 工具函数 ====================
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function shuffle(arr) { let a = [...arr]; for (let i = a.length - 1; i > 0; i--) { let j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function dist(x1, y1, x2, y2) { return Math.sqrt((x2-x1)**2 + (y2-y1)**2); }
+
+// 居中自动换行文本绘制：在指定中心点绘制文本，自动换行适应宽度
+function drawCenteredText(str, centerX, y, maxW, maxH, lineHeight) {
+  textAlign(CENTER, TOP);
+  lineHeight = lineHeight || 12;
+  // 按字符拆分行（支持中英文）
+  let chars = str.split('');
+  let lines = [];
+  let currentLine = '';
+  let currentW = 0;
+  for (let i = 0; i < chars.length; i++) {
+    let ch = chars[i];
+    let chW = textWidth(ch);
+    if (currentW + chW > maxW && currentLine.length > 0) {
+      lines.push(currentLine);
+      currentLine = ch;
+      currentW = chW;
+    } else {
+      currentLine += ch;
+      currentW += chW;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  // 限制行数
+  let maxLines = Math.floor(maxH / lineHeight);
+  if (lines.length > maxLines) {
+    lines = lines.slice(0, maxLines);
+    let lastLine = lines[maxLines - 1];
+    // 如果可能，截断最后一行
+    while (lastLine.length > 0 && textWidth(lastLine + '…') > maxW) {
+      lastLine = lastLine.slice(0, -1);
+    }
+    lastLine = lastLine + '…';
+    lines[maxLines - 1] = lastLine;
+  }
+  // 绘制每一行
+  for (let i = 0; i < lines.length; i++) {
+    text(lines[i], centerX, y + i * lineHeight);
+  }
+}
+
+// ==================== 游戏状态管理器 ====================
+class GameState {
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    this.hp = 70; this.maxHp = 70;
+    this.gold = 100;
+    this.deck = [];
+    this.relics = [];
+    this.currentLayer = 0;
+    this.currentNodeId = null;
+    this.mapPath = [];
+    this.scene = 'title';
+    this.combatState = null;
+    this.turnNumber = 0;
+    this.floorNumber = 0;
+    this.showDeckViewer = false;
+    this.viewerTab = 'deck'; // 'deck' | 'relics'
+    // 初始化基础牌组
+    this.initDeck();
+  }
+  initDeck() {
+    this.deck = [];
+    // 基础攻击与防御（保留少量作为基础）
+    for (let i = 0; i < 2; i++) this.deck.push({...CARD_DATA.find(c=>c.id==='strike')});
+    for (let i = 0; i < 2; i++) this.deck.push({...CARD_DATA.find(c=>c.id==='defend')});
+    // 先攻牌 - 启动连击窗口
+    for (let i = 0; i < 2; i++) this.deck.push({...CARD_DATA.find(c=>c.id==='quick_strike')});
+    // 连击牌 - 叠加连击计数
+    for (let i = 0; i < 2; i++) this.deck.push({...CARD_DATA.find(c=>c.id==='flurry')});
+    // 猛击牌 - 消耗连击造成高伤
+    this.deck.push({...CARD_DATA.find(c=>c.id==='heavy_smash')});
+    // 连击防御 - 防御也能参与连击
+    this.deck.push({...CARD_DATA.find(c=>c.id==='combo_defense')});
+    // 异常牌 - 配合连击加强异常效果
+    this.deck.push({...CARD_DATA.find(c=>c.id==='burn_touch')});
+    // 每个卡牌实例添加唯一ID
+    this.deck.forEach((c, i) => { c.uid = i; c.upgraded = false; });
+  }
+  addCard(cardTemplate) {
+    let c = {...cardTemplate};
+    c.uid = Date.now() + Math.random();
+    c.upgraded = false;
+    this.deck.push(c);
+  }
+  removeCardByUid(uid) {
+    let idx = this.deck.findIndex(c => c.uid === uid);
+    if (idx >= 0) this.deck.splice(idx, 1);
+  }
+  addRelic(relic) {
+    if (!this.relics.find(r => r.id === relic.id)) {
+      this.relics.push({...relic});
+    }
+  }
+  hasRelic(id) { return this.relics.some(r => r.id === id); }
+  heal(amt) { this.hp = Math.min(this.maxHp, this.hp + amt); }
+  takeDamage(amt) {
+    this.hp -= amt;
+    if (this.hp <= 0) { this.hp = 0; this.scene = 'defeat'; }
+  }
+  getMaxAp() {
+    let ap = 3;
+    this.relics.forEach(r => { if (r.modifyMaxAp) ap += r.modifyMaxAp; });
+    return ap;
+  }
+  getShopDiscount() {
+    let d = 0;
+    this.relics.forEach(r => { if (r.modifyShopDiscount) d += r.modifyShopDiscount; });
+    return d;
+  }
+}
+
+// ==================== 事件总线 ====================
+class EventBus {
+  constructor() {
+    this.listeners = {};
+  }
+  on(event, fn) {
+    if (!this.listeners[event]) this.listeners[event] = [];
+    this.listeners[event].push(fn);
+  }
+  emit(event, data) {
+    if (this.listeners[event]) {
+      this.listeners[event].forEach(fn => fn(data));
+    }
+  }
+  clear() { this.listeners = {}; }
+}
+
+// ==================== 音频管理器（Web Audio API 过程化生成） ====================
+class AudioManager {
+  constructor() {
+    this.ctx = null;
+    this.masterGain = null;
+    this.musicGain = null;
+    this.sfxGain = null;
+    this.currentBGM = null;
+    this.bgmNodes = [];
+    this.initialized = false;
+  }
+  init() {
+    if (this.initialized) return;
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = 0.3;
+      this.masterGain.connect(this.ctx.destination);
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.gain.value = 0.4;
+      this.musicGain.connect(this.masterGain);
+      this.sfxGain = this.ctx.createGain();
+      this.sfxGain.gain.value = 0.5;
+      this.sfxGain.connect(this.masterGain);
+      this.initialized = true;
+    } catch(e) { console.warn('Audio init failed:', e); }
+  }
+  stopBGM() {
+    this.bgmNodes.forEach(n => { try { n.stop(); } catch(e) {} });
+    this.bgmNodes = [];
+  }
+  // 地图BGM - 神秘、悠远
+  playMapBGM() {
+    this.stopBGM();
+    if (!this.ctx) return;
+    let ctx = this.ctx;
+    let now = ctx.currentTime;
+    // 低音持续嗡鸣
+    for (let i = 0; i < 3; i++) {
+      let osc = ctx.createOscillator();
+      let gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = [55, 82.4, 110][i] * (1 + Math.sin(i * 2.1) * 0.02);
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.08, now + 1);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(now);
+      this.bgmNodes.push(osc);
+      // 缓慢调制
+      let lfo = ctx.createOscillator();
+      let lfoGain = ctx.createGain();
+      lfo.frequency.value = 0.1 + i * 0.03;
+      lfoGain.gain.value = 8;
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.frequency);
+      lfo.start(now);
+      this.bgmNodes.push(lfo);
+    }
+    // 高音叮当 - 神秘感
+    let scheduleChime = (time, freq) => {
+      let osc = ctx.createOscillator();
+      let gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, time);
+      gain.gain.linearRampToValueAtTime(0.06, time + 0.05);
+      gain.gain.linearRampToValueAtTime(0, time + 1.5);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(time);
+      osc.stop(time + 1.5);
+      this.bgmNodes.push(osc);
+    };
+    let chimeFreqs = [523, 659, 784, 1047, 880, 698, 587, 523];
+    for (let i = 0; i < 32; i++) {
+      scheduleChime(now + i * 1.8 + Math.random() * 0.3, chimeFreqs[i % chimeFreqs.length] * (0.8 + Math.random() * 0.4));
+    }
+  }
+  // 商店/事件BGM - 古怪、奇特
+  playShopBGM() {
+    this.stopBGM();
+    if (!this.ctx) return;
+    let ctx = this.ctx;
+    let now = ctx.currentTime;
+    // 奇怪的音阶
+    let weirdScale = [130.8, 155.6, 185, 207.7, 233.1, 277.2, 311.1];
+    for (let i = 0; i < 24; i++) {
+      let osc = ctx.createOscillator();
+      let gain = ctx.createGain();
+      osc.type = i % 3 === 0 ? 'square' : 'triangle';
+      let freq = weirdScale[i % weirdScale.length] * (i < 12 ? 1 : 2);
+      osc.frequency.value = freq;
+      let t = now + i * 1.2;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.04, t + 0.1);
+      gain.gain.linearRampToValueAtTime(0.03, t + 0.3);
+      gain.gain.linearRampToValueAtTime(0, t + 0.9);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(t);
+      osc.stop(t + 1.0);
+      this.bgmNodes.push(osc);
+    }
+    // 低音
+    let bass = ctx.createOscillator();
+    let bassGain = ctx.createGain();
+    bass.type = 'sawtooth';
+    bass.frequency.value = 65.4;
+    bassGain.gain.setValueAtTime(0.03, now);
+    bass.connect(bassGain);
+    bassGain.connect(this.musicGain);
+    bass.start(now);
+    this.bgmNodes.push(bass);
+  }
+  // 战斗BGM - 紧张、激烈
+  playBattleBGM() {
+    this.stopBGM();
+    if (!this.ctx) return;
+    let ctx = this.ctx;
+    let now = ctx.currentTime;
+    // 低音鼓点节奏
+    for (let i = 0; i < 64; i++) {
+      let t = now + i * 0.4;
+      let osc = ctx.createOscillator();
+      let gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 60 + Math.sin(i * 0.7) * 30;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.15, t + 0.02);
+      gain.gain.linearRampToValueAtTime(0, t + 0.2);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(t);
+      osc.stop(t + 0.25);
+      this.bgmNodes.push(osc);
+    }
+    // 战斗旋律
+    let battleScale = [196, 220, 261.6, 293.7, 329.6, 349.2, 392];
+    for (let i = 0; i < 48; i++) {
+      let osc = ctx.createOscillator();
+      let gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.value = battleScale[i % battleScale.length];
+      let t = now + i * 0.6;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.06, t + 0.05);
+      gain.gain.linearRampToValueAtTime(0, t + 0.4);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(t);
+      osc.stop(t + 0.45);
+      this.bgmNodes.push(osc);
+    }
+  }
+  // 音效
+  playSFX(type) {
+    if (!this.ctx) return;
+    let ctx = this.ctx;
+    let now = ctx.currentTime;
+    let osc, gain;
+    switch (type) {
+      case 'card_play':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(440, now);
+        osc.frequency.linearRampToValueAtTime(880, now + 0.08);
+        gain.gain.setValueAtTime(0.15, now); gain.gain.linearRampToValueAtTime(0, now + 0.15);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.15);
+        break;
+      case 'attack':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(200, now);
+        osc.frequency.linearRampToValueAtTime(80, now + 0.15);
+        gain.gain.setValueAtTime(0.2, now); gain.gain.linearRampToValueAtTime(0, now + 0.2);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.2);
+        break;
+      case 'block':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'triangle'; osc.frequency.setValueAtTime(300, now);
+        osc.frequency.linearRampToValueAtTime(600, now + 0.1);
+        gain.gain.setValueAtTime(0.12, now); gain.gain.linearRampToValueAtTime(0, now + 0.15);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.15);
+        break;
+      case 'combo':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(600, now);
+        osc.frequency.linearRampToValueAtTime(1200, now + 0.06);
+        gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0, now + 0.1);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.1);
+        break;
+      case 'smash':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'square'; osc.frequency.setValueAtTime(100, now);
+        osc.frequency.linearRampToValueAtTime(30, now + 0.3);
+        gain.gain.setValueAtTime(0.25, now); gain.gain.linearRampToValueAtTime(0, now + 0.35);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.35);
+        // 噪音层
+        let bufferSize = ctx.sampleRate * 0.1;
+        let buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        let data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+        let noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+        let noiseGain = ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.1, now); noiseGain.gain.linearRampToValueAtTime(0, now + 0.1);
+        noise.connect(noiseGain); noiseGain.connect(this.sfxGain);
+        noise.start(now);
+        break;
+      case 'stun':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(800, now);
+        osc.frequency.setValueAtTime(400, now + 0.1);
+        osc.frequency.setValueAtTime(200, now + 0.2);
+        gain.gain.setValueAtTime(0.15, now); gain.gain.linearRampToValueAtTime(0, now + 0.3);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.3);
+        break;
+      case 'hurt':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, now);
+        osc.frequency.linearRampToValueAtTime(50, now + 0.2);
+        gain.gain.setValueAtTime(0.15, now); gain.gain.linearRampToValueAtTime(0, now + 0.25);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.25);
+        break;
+      case 'gold':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(1200, now);
+        osc.frequency.linearRampToValueAtTime(1800, now + 0.06);
+        gain.gain.setValueAtTime(0.08, now); gain.gain.linearRampToValueAtTime(0, now + 0.12);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.12);
+        break;
+      case 'heal':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(400, now);
+        osc.frequency.linearRampToValueAtTime(800, now + 0.2);
+        gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0, now + 0.3);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.3);
+        break;
+      case 'draw':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(500, now);
+        osc.frequency.linearRampToValueAtTime(700, now + 0.05);
+        gain.gain.setValueAtTime(0.06, now); gain.gain.linearRampToValueAtTime(0, now + 0.08);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.08);
+        break;
+      case 'death':
+        osc = ctx.createOscillator(); gain = ctx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, now);
+        osc.frequency.linearRampToValueAtTime(20, now + 0.8);
+        gain.gain.setValueAtTime(0.2, now); gain.gain.linearRampToValueAtTime(0, now + 0.9);
+        osc.connect(gain); gain.connect(this.sfxGain);
+        osc.start(now); osc.stop(now + 0.9);
+        break;
+      case 'victory':
+        [523, 659, 784, 1047].forEach((f, i) => {
+          let o = ctx.createOscillator();
+          let g = ctx.createGain();
+          o.type = 'triangle'; o.frequency.value = f;
+          let t = now + i * 0.12;
+          g.gain.setValueAtTime(0, t);
+          g.gain.linearRampToValueAtTime(0.12, t + 0.05);
+          g.gain.linearRampToValueAtTime(0, t + 0.3);
+          o.connect(g); g.connect(this.sfxGain);
+          o.start(t); o.stop(t + 0.35);
+        });
+        break;
+    }
+  }
+}
+
+// ==================== 粒子系统 ====================
+class Particle {
+  constructor(x, y, vx, vy, life, color, size, glyph) {
+    this.x = x; this.y = y; this.vx = vx; this.vy = vy;
+    this.life = life; this.maxLife = life;
+    this.color = color; this.size = size;
+    this.glyph = glyph || null; // 符文符号
+    this.rot = rand(0, Math.PI * 2);
+    this.rotV = rand(-0.1, 0.1);
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.05; // 重力
+    this.life--;
+    this.rot += this.rotV;
+  }
+  get alive() { return this.life > 0; }
+  get alpha() { return clamp(this.life / this.maxLife, 0, 1); }
+}
+
+class ParticleSystem {
+  constructor() {
+    this.particles = [];
+  }
+  emit(x, y, count, config = {}) {
+    let { color = '#ffffff', size = 3, life = 30, speed = 2, glyphs = null } = config;
+    for (let i = 0; i < count; i++) {
+      let angle = rand(0, Math.PI * 2);
+      let spd = rand(speed * 0.5, speed);
+      let glyph = glyphs ? pick(glyphs) : null;
+      this.particles.push(new Particle(x, y, Math.cos(angle) * spd, Math.sin(angle) * spd, rand(life*0.5, life), color, rand(size*0.5, size), glyph));
+    }
+  }
+  update() {
+    this.particles = this.particles.filter(p => { p.update(); return p.alive; });
+  }
+  draw() {
+    this.particles.forEach(p => {
+      push();
+      translate(p.x, p.y);
+      rotate(p.rot);
+      let c = color(p.color);
+      fill(red(c), green(c), blue(c), p.alpha * 255);
+      noStroke();
+      if (p.glyph) {
+        textAlign(CENTER, CENTER);
+        textSize(p.size * 4);
+        text(p.glyph, 0, 0);
+      } else {
+        ellipse(0, 0, p.size, p.size);
+      }
+      pop();
+    });
+  }
+  clear() { this.particles = []; }
+}
+
+// ==================== 浮动文字系统 ====================
+class FloatingText {
+  constructor(x, y, text, color, size = 18) {
+    this.x = x; this.y = y; this.text = text;
+    this.color = color; this.size = size;
+    this.life = 45; this.maxLife = 45;
+    this.vy = -2;
+  }
+  update() { this.y += this.vy; this.vy *= 0.97; this.life--; }
+  get alive() { return this.life > 0; }
+  get alpha() { return clamp(this.life / this.maxLife, 0, 1) * 255; }
+}
+
+class FloatingTextManager {
+  constructor() { this.texts = []; }
+  add(x, y, text, color, size) { this.texts.push(new FloatingText(x, y, text, color, size)); }
+  update() { this.texts = this.texts.filter(t => { t.update(); return t.alive; }); }
+  draw() {
+    this.texts.forEach(t => {
+      push();
+      let c = color(t.color);
+      fill(red(c), green(c), blue(c), t.alpha);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(t.size);
+      text(t.text, t.x, t.y);
+      pop();
+    });
+  }
+  clear() { this.texts = []; }
+}
+
+// ==================== 屏幕震动 ====================
+class ScreenShake {
+  constructor() { this.intensity = 0; this.duration = 0; this.ox = 0; this.oy = 0; }
+  trigger(intensity, duration) {
+    this.intensity = Math.max(this.intensity, intensity);
+    this.duration = Math.max(this.duration, duration);
+  }
+  update() {
+    if (this.duration > 0) {
+      this.ox = rand(-this.intensity, this.intensity);
+      this.oy = rand(-this.intensity, this.intensity);
+      this.duration--;
+      this.intensity *= 0.9;
+    } else {
+      this.ox = 0; this.oy = 0;
+    }
+  }
+  apply() {
+    if (this.ox !== 0 || this.oy !== 0) {
+      translate(this.ox, this.oy);
+    }
+  }
+}
+
+// ==================== 全局实例 ====================
+let gs, events, audio, particles, floatingTexts, screenShake;
+
+// ==================== 按钮组件 ====================
+function drawButton( x, y, w, h, text, hovered, enabled = true, btnColor = COLORS.gold) {
+  push();
+  translate(x, y);
+  // 阴影
+  fill(0, hovered ? 60 : 40);
+  noStroke();
+  rect(2, 2, w, h, 6);
+  // 主体
+  let c = color(btnColor);
+  if (hovered) {
+    fill(red(c) * 1.2, green(c) * 1.2, blue(c) * 1.2);
+  } else {
+    fill(red(c), green(c), blue(c));
+  }
+  // 禁用状态叠加遮罩
+  if (!enabled) {
+    fill(0, 155);
+    noStroke();
+    rect(0, 0, w, h, 6);
+  }
+  stroke(0, 80);
+  strokeWeight(1.5);
+  rect(0, 0, w, h, 6);
+  // 文字
+  fill(enabled ? 0 : 200);
+  noStroke();
+  textAlign(CENTER, CENTER);
+  textSize(14);
+  textStyle(BOLD);
+  text(text, w / 2, h / 2);
+  pop();
+  return hovered && enabled;
+}
+
+// ==================== 场景基类 ====================
+class Scene {
+  constructor() { this.transitionAlpha = 0; this.transitioning = false; }
+  enter() { this.transitionAlpha = 255; this.transitioning = true; }
+  update() {
+    if (this.transitioning) {
+      this.transitionAlpha -= 8;
+      if (this.transitionAlpha <= 0) { this.transitionAlpha = 0; this.transitioning = false; }
+    }
+  }
+  draw() {
+    if (this.transitionAlpha > 0) {
+      fill(0, this.transitionAlpha);
+      noStroke();
+      rect(0, 0, GAME_W, GAME_H);
+    }
+  }
+  mousePressed() {}
+  mouseReleased() {}
+  keyPressed() {}
+}
+
+// ==================== 标题场景 ====================
+class TitleScene extends Scene {
+  enter() {
+    super.enter();
+    audio.playMapBGM();
+    this.titleY = -100;
+    this.subtitleAlpha = 0;
+    this.startAlpha = 0;
+    this.time = 0;
+    this.glyphs = [];
+    for (let i = 0; i < 30; i++) {
+      this.glyphs.push({
+        x: rand(0, GAME_W), y: rand(0, GAME_H),
+        vx: rand(-0.3, 0.3), vy: rand(-0.5, -0.1),
+        glyph: pick(['☿','♀','♁','♃','♄','♅','♆','☉','☽','☿','⚗','⚘','⚙','⛤','⛧','♰','✠','✢','✣','✤','✦','✧','★','☆','◈','◇','◆','◉','◎','●']),
+        alpha: rand(20, 60),
+        size: rand(14, 32),
+        life: 300 + rand(0, 200),
+      });
+    }
+  }
+  update() {
+    super.update();
+    this.time++;
+    this.titleY = lerp(this.titleY, GAME_H * 0.28, 0.05);
+    if (this.time > 30) this.subtitleAlpha = lerp(this.subtitleAlpha, 200, 0.04);
+    if (this.time > 60) this.startAlpha = lerp(this.startAlpha, 255, 0.04);
+    this.glyphs.forEach(g => {
+      g.x += g.vx; g.y += g.vy;
+      g.life--;
+      if (g.life <= 0) { g.x = rand(0, GAME_W); g.y = GAME_H + 20; g.life = 300 + rand(0, 200); }
+    });
+  }
+  draw() {
+    background(COLORS.bg);
+    // 背景符文
+    this.glyphs.forEach(g => {
+      fill(COLORS.goldDim);
+      textAlign(CENTER, CENTER);
+      textSize(g.size);
+      text(g.glyph, g.x, g.y);
+    });
+    // 标题
+    push();
+    translate(GAME_W / 2, this.titleY);
+    // 光晕
+    for (let i = 3; i >= 0; i--) {
+      cFill('gold', 30 - i * 5);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(60 + i * 8);
+      textStyle(BOLD);
+      text('深渊手稿', 0, 0);
+    }
+    fill(COLORS.goldBright);
+    textSize(56);
+    text('深渊手稿', 0, 0);
+    fill(COLORS.gold);
+    textSize(18);
+    text('CODEX ABYSSUS', 0, 50);
+    pop();
+    // 副标题
+    if (this.subtitleAlpha > 0) {
+      fill(COLORS.textDim);
+      textAlign(CENTER, CENTER);
+      textSize(13);
+      text('以连击为核心的卡牌肉鸽冒险', GAME_W / 2, GAME_H * 0.48);
+    }
+    // 开始按钮
+    if (this.startAlpha > 0) {
+      let bx = GAME_W / 2 - 80;
+      let by = GAME_H * 0.62;
+      let hovered = mouseX > bx && mouseX < bx + 160 && mouseY > by && mouseY < by + 46;
+      fill(0, 120);
+      noStroke();
+      rect(bx - 2, by + 2, 164, 46, 8);
+      if (hovered) {
+        fill(COLORS.goldBright);
+        stroke(COLORS.gold);
+      } else {
+        fill(COLORS.panel);
+        stroke(COLORS.goldDim);
+      }
+      strokeWeight(2);
+      rect(bx, by, 160, 44, 8);
+      fill(hovered ? 0 : COLORS.gold);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(18);
+      textStyle(BOLD);
+      text('进 入 深 渊', bx + 80, by + 22);
+      this.startBtn = { x: bx, y: by, w: 160, h: 44, hovered };
+    }
+    // 底部装饰
+    stroke(COLORS.goldDim);
+    strokeWeight(1);
+    line(GAME_W * 0.3, GAME_H * 0.82, GAME_W * 0.7, GAME_H * 0.82);
+    fill(COLORS.textDim);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(10);
+    text('行动点 · 连击 · 先攻 · 猛击 · 震慑 · 异常 · 流转', GAME_W / 2, GAME_H * 0.86);
+    textSize(9);
+    text('【Tab】查看牌库 · 【ESC】关闭', GAME_W / 2, GAME_H * 0.90);
+    super.draw();
+  }
+  mousePressed() {
+    // 点击任意位置开始游戏
+    gs.reset();
+    gs.scene = 'map';
+  }
+  keyPressed() {
+    // 按任意键开始游戏
+    gs.reset();
+    gs.scene = 'map';
+  }
+}
+
+// ==================== 地图场景 ====================
+class MapScene extends Scene {
+  enter() {
+    super.enter();
+    audio.playMapBGM();
+    this.mapConfig = MAP_CONFIG;
+    // 检查是否所有层都已完成
+    if (gs.currentLayer >= this.mapConfig.layers.length) {
+      gs.scene = 'victory';
+      return;
+    }
+    this.currentLayer = gs.currentLayer;
+    this.hoveredNode = null;
+    this.selectedNode = null;
+    this.nodeAnimations = {};
+    this.bgParticles = [];
+    for (let i = 0; i < 20; i++) {
+      this.bgParticles.push({ x: rand(0, GAME_W), y: rand(0, GAME_H), vx: rand(-0.2, 0.2), vy: rand(-0.4, -0.1), life: 200 + rand(0, 300), glyph: pick(['☿','♁','♃','⚗','⛤','✠','✢','✦','◈','●']), size: rand(10, 24) });
+    }
+  }
+  getNodePos(node) {
+    return { x: node.x * GAME_W, y: node.y * GAME_H };
+  }
+  getNodeTypeInfo(type) {
+    switch (type) {
+      case 'battle': return { icon: '⚔', label: '战斗', color: COLORS.red };
+      case 'elite': return { icon: '⛨', label: '精英', color: COLORS.orange };
+      case 'boss': return { icon: '✠', label: 'BOSS', color: '#ff2060' };
+      case 'shop': return { icon: '💰', label: '商店', color: COLORS.gold };
+      case 'event': return { icon: '?', label: '事件', color: COLORS.purple };
+      case 'rest': return { icon: '☤', label: '休息', color: COLORS.green };
+      case 'treasure': return { icon: '★', label: '宝藏', color: COLORS.goldBright };
+      default: return { icon: '○', label: '???', color: COLORS.white };
+    }
+  }
+  update() {
+    super.update();
+    this.bgParticles.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; if (p.life <= 0) { p.x = rand(0, GAME_W); p.y = GAME_H + 20; p.life = 200 + rand(0, 300); } });
+    this.hoveredNode = null;
+    let layer = this.mapConfig.layers[this.currentLayer];
+    if (!layer) return;
+    // 获取可到达的节点
+    let reachableIds = new Set();
+    if (gs.currentNodeId) {
+      // 搜索所有层的连接来找到当前节点能到达的目标
+      for (let l of this.mapConfig.layers) {
+        (l.connections || []).forEach(([from, to]) => {
+          if (from === gs.currentNodeId) reachableIds.add(to);
+        });
+      }
+    } else {
+      layer.nodes.forEach(n => reachableIds.add(n.id));
+    }
+    layer.nodes.forEach(node => {
+      if (!reachableIds.has(node.id)) return;
+      let pos = this.getNodePos(node);
+      let r = node.type === 'boss' ? 35 : 25;
+      let d = dist(mouseX, mouseY, pos.x, pos.y);
+      if (d < r) this.hoveredNode = node;
+    });
+  }
+  draw() {
+    background(COLORS.bg);
+    // 背景粒子
+    this.bgParticles.forEach(p => {
+      fill(COLORS.goldDim);
+      textAlign(CENTER, CENTER);
+      textSize(p.size);
+      text(p.glyph, p.x, p.y);
+    });
+    // 绘制连接线
+    strokeWeight(2);
+    for (let li = 0; li < this.mapConfig.layers.length; li++) {
+      let conns = this.mapConfig.layers[li].connections || [];
+      conns.forEach(([fromId, toId]) => {
+        let fromNode = this.findNode(fromId);
+        let toNode = this.findNode(toId);
+        if (!fromNode || !toNode) return;
+        let from = this.getNodePos(fromNode);
+        let to = this.getNodePos(toNode);
+        let visited = gs.mapPath.includes(fromId) && gs.mapPath.includes(toId);
+        let available = gs.currentNodeId === fromId || (!gs.currentNodeId && li === gs.currentLayer);
+        if (visited) {
+          cStroke('gold', 180);
+          strokeWeight(2.5);
+        } else if (available) {
+          cStroke('goldDim', 100);
+          strokeWeight(1.5);
+        } else {
+          cStroke('textDim', 40);
+          strokeWeight(1);
+        }
+        line(from.x, from.y, to.x, to.y);
+      });
+    }
+    // 绘制节点
+    for (let li = 0; li < this.mapConfig.layers.length; li++) {
+      let layer = this.mapConfig.layers[li];
+      let isCurrentLayer = li === this.currentLayer;
+      // 判断哪些节点可到达
+      let reachableIds = new Set();
+      if (isCurrentLayer) {
+        if (gs.currentNodeId) {
+          // 搜索所有层的连接
+          for (let l of this.mapConfig.layers) {
+            (l.connections || []).forEach(([from, to]) => {
+              if (from === gs.currentNodeId) reachableIds.add(to);
+            });
+          }
+        } else {
+          layer.nodes.forEach(n => reachableIds.add(n.id));
+        }
+      }
+      layer.nodes.forEach(node => {
+        let pos = this.getNodePos(node);
+        let info = this.getNodeTypeInfo(node.type);
+        let visited = gs.mapPath.includes(node.id);
+        let reachable = reachableIds.has(node.id);
+        let isCurrent = node.id === gs.currentNodeId;
+        let r = node.type === 'boss' ? 35 : 25;
+        let alpha = (isCurrentLayer || visited) ? 255 : (reachable ? 180 : 60);
+        push();
+        translate(pos.x, pos.y);
+        // 脉冲动画
+        let pulse = 1 + Math.sin(frameCount * 0.05 + pos.x * 0.01) * 0.08;
+        if (isCurrent || this.hoveredNode === node) pulse = 1 + Math.sin(frameCount * 0.1) * 0.15;
+        // 光晕
+        if (isCurrent || this.hoveredNode === node) {
+          for (let i = 3; i >= 0; i--) {
+            let rgb = hexToRgb(info.color);
+            fill(rgb.r, rgb.g, rgb.b, 20 - i * 4);
+            noStroke();
+            ellipse(0, 0, (r + i * 6) * 2 * pulse, (r + i * 6) * 2 * pulse);
+          }
+        }
+        // 节点主体
+        if (visited) {
+          fill(color(info.color));
+          stroke(COLORS.gold);
+          strokeWeight(2.5);
+        } else if (reachable) {
+          fill(COLORS.bgLight);
+          stroke(color(info.color));
+          strokeWeight(2);
+        } else {
+          fill(COLORS.bg);
+          cStroke('textDim', 80);
+          strokeWeight(1);
+        }
+        ellipse(0, 0, r * 2 * pulse, r * 2 * pulse);
+        // 图标
+        fill(visited ? 0 : color(info.color));
+        noStroke();
+        textAlign(CENTER, CENTER);
+        textSize(node.type === 'boss' ? 22 : 16);
+        text(info.icon, 0, 0);
+        // 标签
+        fill(visited ? COLORS.gold : (reachable ? COLORS.text : COLORS.textDim));
+        textSize(10);
+        text(info.label, 0, r + 14);
+        // 当前节点标记
+        if (isCurrent) {
+          noFill();
+          stroke(COLORS.goldBright);
+          strokeWeight(2);
+          ellipse(0, 0, (r + 8) * 2 * pulse, (r + 8) * 2 * pulse);
+        }
+        pop();
+      });
+    }
+    // 层标签
+    fill(COLORS.textDim);
+    textAlign(LEFT, CENTER);
+    textSize(12);
+    for (let li = 0; li < this.mapConfig.layers.length; li++) {
+      let y = this.mapConfig.layers[li].nodes[0].y * GAME_H;
+      let label = li === this.mapConfig.layers.length - 1 ? '深渊底层' : `第${li + 1}层`;
+      text(label, 20, y);
+      cStroke('goldDim', 40);
+      strokeWeight(1);
+      line(70, y, 90, y);
+    }
+    // 玩家信息
+    this.drawPlayerInfo();
+    super.draw();
+  }
+  drawPlayerInfo() {
+    fill(COLORS.panel);
+    stroke(COLORS.panelEdge);
+    strokeWeight(1);
+    rect(GAME_W - 160, 10, 150, 65, 8);
+    fill(COLORS.text);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(12);
+    text(`❤ ${gs.hp}/${gs.maxHp}`, GAME_W - 148, 18);
+    text(`💰 ${gs.gold}`, GAME_W - 148, 36);
+    text(`🃏 ${gs.deck.length}张`, GAME_W - 148, 54);
+    // 遗物
+    if (gs.relics.length > 0) {
+      fill(COLORS.textDim);
+      textSize(10);
+      text(`遗物: ${gs.relics.map(r => r.icon).join(' ')}`, GAME_W - 148, 68);
+    }
+  }
+  findNode(id) {
+    for (let layer of this.mapConfig.layers) {
+      for (let node of layer.nodes) {
+        if (node.id === id) return node;
+      }
+    }
+    return null;
+  }
+  mousePressed() {
+    if (this.hoveredNode) {
+      let node = this.hoveredNode;
+      gs.mapPath.push(node.id);
+      gs.currentNodeId = node.id;
+      // 进入对应场景
+      switch (node.type) {
+        case 'battle': gs.scene = 'battle'; gs.combatState = null; break;
+        case 'elite': gs.scene = 'battle'; gs.combatState = null; break;
+        case 'boss': gs.scene = 'battle'; gs.combatState = null; break;
+        case 'shop': gs.scene = 'shop'; break;
+        case 'event': gs.scene = 'event'; break;
+        case 'rest': gs.scene = 'rest'; break;
+        case 'treasure': gs.scene = 'treasure'; break;
+        default: gs.scene = 'battle'; gs.combatState = null; break;
+      }
+      // 只有非Boss节点且不在最后一层时才前进层级
+      if (node.type !== 'boss' && gs.currentLayer < this.mapConfig.layers.length - 1) {
+        gs.currentLayer++;
+      }
+    }
+  }
+}
+
+// ==================== 战斗场景 ====================
+class BattleScene extends Scene {
+  enter() {
+    super.enter();
+    audio.playBattleBGM();
+    this.initCombat();
+    this.cardAnimations = [];
+    this.enemyAnim = { shakeX: 0, shakeY: 0, scale: 1, flashAlpha: 0 };
+    this.playerAnim = { shakeX: 0, shakeY: 0, flashAlpha: 0 };
+    this.hoveredCard = null;
+    this.selectedCard = null;
+    this.enemyIntent = null;
+    this.generateEnemyIntent();
+    this.bgGlyphs = [];
+    for (let i = 0; i < 15; i++) {
+      this.bgGlyphs.push({ x: rand(0, GAME_W), y: rand(0, GAME_H), vx: rand(-0.15, 0.15), vy: rand(-0.3, -0.05), glyph: pick(['☿','♁','⚗','⛤','✠','✦','◈','●']), size: rand(8, 20), alpha: rand(10, 30) });
+    }
+    floatingTexts.clear();
+    particles.clear();
+    this.turnStartDelay = 30;
+    this.enemyTurnDelay = 0;
+    this.enemyActionQueue = [];
+    this.battleEnding = false;
+    this.battleResult = null;
+  }
+  initCombat() {
+    let node = this.findCurrentNode();
+    let enemyId = this.selectEnemy(node);
+    let enemyData = ENEMY_DATA[enemyId];
+    gs.combatState = {
+      enemyId: enemyId,
+      enemyData: {...enemyData},
+      enemyHp: enemyData.maxHp,
+      enemyBlock: 0,
+      enemyMaxHp: enemyData.maxHp,
+      enemyStatuses: {}, // { burn: stacks, freeze: stacks, corrode: stacks, vulnerable: stacks, weak: stacks }
+      enemyStunStacks: 0,
+      playerBlock: 0,
+      ap: gs.getMaxAp(),
+      maxAp: gs.hasRelic('cursed_dice') ? gs.getMaxAp() : gs.getMaxAp(),
+      comboCount: 0,
+      comboWindow: 3, // 先攻触发的连击窗口：剩余可自动视作连击的攻击牌数
+      lastPlayedKeyword: null,
+      cardsPlayedThisTurn: [],
+      drawPile: shuffle([...gs.deck]),
+      hand: [],
+      discardPile: [],
+      exhaustPile: [],
+      turnPhase: 'player', // 'player' | 'enemy' | 'animating'
+      enemyFirstAttackHalved: gs.hasRelic('void_mask'),
+      enemyPreDmg: gs.hasRelic('philosopher_stone') ? 10 : 0,
+      bossPhase2: false,
+      enemyIntentIndex: 0,
+      playerStatuses: {},
+    };
+    // 遗物效果 - 战斗开始
+    gs.relics.forEach(r => { if (r.onCombatStart) r.onCombatStart(gs); });
+    // 先攻之印
+    if (gs.hasRelic('first_strike_charm')) {
+      gs.combatState.cardsPlayedThisTurn = []; // 让所有卡都有先攻效果
+    }
+    // 贤者之石
+    if (gs.combatState.enemyPreDmg > 0) {
+      gs.combatState.enemyHp -= gs.combatState.enemyPreDmg;
+      floatingTexts.add(GAME_W * 0.65, GAME_H * 0.35, '-' + gs.combatState.enemyPreDmg, COLORS.orange);
+    }
+    // 洗牌并抽牌
+    this.drawCards(5);
+  }
+  selectEnemy(node) {
+    if (!node) return 'void_spawn';
+    if (node.type === 'boss') return 'codex_abyssus';
+    if (node.type === 'elite') {
+      return gs.floorNumber >= 1 ? 'nightmare_knight' : 'bound_abomination';
+    }
+    // 普通战斗
+    let pool = gs.floorNumber >= 1
+      ? ['void_spawn', 'flesh_weaver', 'rune_guardian', 'mind_devourer']
+      : ['void_spawn', 'flesh_weaver'];
+    return pick(pool);
+  }
+  findCurrentNode() {
+    for (let layer of MAP_CONFIG.layers) {
+      for (let node of layer.nodes) {
+        if (node.id === gs.currentNodeId) return node;
+      }
+    }
+    return null;
+  }
+  generateEnemyIntent() {
+    let cs = gs.combatState;
+    let pattern = cs.enemyData.intentPattern;
+    let idx = cs.enemyIntentIndex % pattern.length;
+    let intentType = pattern[idx];
+    // 特殊行动概率
+    if (intentType === 'special' || (cs.enemyData.specialChance && Math.random() < cs.enemyData.specialChance)) {
+      intentType = 'special';
+    }
+    let intent = { type: intentType };
+    switch (intentType) {
+      case 'attack':
+        intent.dmg = cs.enemyData.attackDmg;
+        if (cs.bossPhase2 && cs.enemyData.bossPhase2) intent.dmg = cs.enemyData.bossPhase2.attackDmg;
+        break;
+      case 'defend':
+        intent.block = cs.enemyData.blockAmt;
+        break;
+      case 'special':
+        let sp = cs.enemyData.special;
+        if (sp.type === 'attack') {
+          intent.type = 'attack';
+          intent.dmg = sp.dmg;
+        } else if (sp.type === 'buff') {
+          intent.type = 'buff';
+          intent.buffType = sp.buffType;
+          intent.amt = sp.amt;
+        } else if (sp.type === 'debuff') {
+          intent.type = 'debuff';
+          intent.debuffType = sp.debuffType;
+          intent.amt = sp.amt;
+        } else if (sp.type === 'heal') {
+          intent.type = 'heal';
+          intent.amt = sp.amt;
+        }
+        break;
+    }
+    this.enemyIntent = intent;
+  }
+  drawCards(n) {
+    let cs = gs.combatState;
+    for (let i = 0; i < n; i++) {
+      if (cs.drawPile.length === 0) {
+        if (cs.discardPile.length === 0) break;
+        cs.drawPile = shuffle(cs.discardPile);
+        cs.discardPile = [];
+        floatingTexts.add(GAME_W * 0.3, GAME_H * 0.85, '洗牌', COLORS.textDim, 14);
+      }
+      if (cs.drawPile.length > 0) {
+        let card = cs.drawPile.pop();
+        // 先攻特性：第一回合更高概率抽到
+        if (gs.turnNumber === 0 && card.keywords.includes('先攻')) {
+          cs.hand.unshift(card); // 放到手牌前面
+        } else {
+          cs.hand.push(card);
+        }
+      }
+    }
+    // 手牌上限10张
+    while (cs.hand.length > 10) {
+      cs.discardPile.push(cs.hand.pop());
+    }
+  }
+  canPlayCard(card) {
+    let cs = gs.combatState;
+    if (cs.turnPhase !== 'player') return false;
+    let cost = card.cost;
+    // 先攻：本回合第一张牌，消耗-1
+    if (card.keywords.includes('先攻') && cs.cardsPlayedThisTurn.length === 0) {
+      cost = Math.max(0, cost - 1);
+    }
+    // 先攻之印遗物
+    if (gs.hasRelic('first_strike_charm') && !card.keywords.includes('先攻') && cs.cardsPlayedThisTurn.length === 0) {
+      cost = Math.max(0, cost - 1);
+    }
+    return cs.ap >= cost;
+  }
+  playCard(card) {
+    let cs = gs.combatState;
+    let cost = card.cost;
+    // 先攻减费
+    if (card.keywords.includes('先攻') && cs.cardsPlayedThisTurn.length === 0) {
+      cost = Math.max(0, cost - 1);
+    }
+    if (gs.hasRelic('first_strike_charm') && cs.cardsPlayedThisTurn.length === 0) {
+      cost = Math.max(0, cost - 1);
+    }
+    cs.ap -= cost;
+    audio.playSFX('card_play');
+    // 卡牌动画
+    let handIdx = cs.hand.indexOf(card);
+    this.cardAnimations.push({
+      type: 'play',
+      card: card,
+      fromX: GAME_W * 0.25 + handIdx * 110,
+      fromY: GAME_H * 0.78,
+      toX: GAME_W * 0.45,
+      toY: GAME_H * 0.5,
+      progress: 0,
+      duration: 20,
+    });
+    cs.hand.splice(handIdx, 1);
+    cs.cardsPlayedThisTurn.push(card);
+    // 处理卡牌特性
+    let dmg = card.baseDmg || 0;
+    let block = card.baseBlock || 0;
+    let keywords = card.keywords || [];
+    let totalDmg = 0;
+    // 连击计数修改
+    let comboAdded = 0;
+    let comboConsumed = 0;
+    // 先攻处理
+    if (keywords.includes('先攻')) {
+      cs.lastPlayedKeyword = '先攻';
+      cs.comboWindow = Math.max(cs.comboWindow, 3); // 先攻后3张攻击牌自动视作连击
+      floatingTexts.add(GAME_W * 0.5, GAME_H * 0.32, '先攻! 连击窗口启动', COLORS.gold, 16);
+    }
+    // 连击处理
+    if (keywords.includes('连击')) {
+      if (cs.lastPlayedKeyword === '先攻' || cs.lastPlayedKeyword === '连击' || cs.lastPlayedKeyword === '流转') {
+        // 连击加成
+        if (card.comboBonus) dmg += card.comboBonus;
+        if (card.comboBlock) block += card.comboBlock;
+        comboAdded = 1;
+        floatingTexts.add(GAME_W * 0.5, GAME_H * 0.3, '连击!', COLORS.combo, 16);
+        audio.playSFX('combo');
+        // 连击引擎遗物
+        gs.relics.forEach(r => { if (r.onComboTrigger) r.onComboTrigger(gs); });
+      }
+      comboAdded += 1;
+      cs.lastPlayedKeyword = '连击';
+    }
+    // 连击窗口：先攻后，后续攻击牌自动视作连击
+    if (cs.comboWindow > 0 && card.type === 'attack' && !keywords.includes('连击')) {
+      // 将此攻击牌视作连击
+      if (cs.lastPlayedKeyword === '先攻' || cs.lastPlayedKeyword === '连击' || cs.lastPlayedKeyword === '流转') {
+        comboAdded += 2; // 窗口内攻击牌额外加成
+        floatingTexts.add(GAME_W * 0.5, GAME_H * 0.3, '连击!', COLORS.combo, 16);
+        audio.playSFX('combo');
+        gs.relics.forEach(r => { if (r.onComboTrigger) r.onComboTrigger(gs); });
+      } else {
+        comboAdded += 1;
+      }
+      cs.comboWindow--;
+      if (cs.comboWindow <= 0) {
+        floatingTexts.add(GAME_W * 0.5, GAME_H * 0.35, '连击窗口结束', COLORS.textDim, 12);
+      }
+      cs.lastPlayedKeyword = '连击';
+    }
+    // 流转处理
+    if (keywords.includes('流转')) {
+      if (cs.lastPlayedKeyword === '猛击') {
+        // 猛击后流转：恢复AP和抽牌
+        let consumed = cs.comboCount; // 猛击已经消耗了连击，这里获取的是消耗前的值
+        // 实际上需要在猛击前保存消耗量... 这里简化处理
+        let lastComboConsumed = cs._lastComboConsumed || 0;
+        let apRestore = Math.floor(lastComboConsumed * (card.apRestorePerCombo || 0.4));
+        if (gs.hasRelic('flow_catalyst')) apRestore += 1;
+        if (card.threshold && lastComboConsumed >= card.threshold) apRestore += (card.thresholdExtraAp || 1);
+        cs.ap += apRestore;
+        if (card.drawCards) this.drawCards(card.drawCards);
+        if (card.retainCombo) cs.comboCount = Math.floor(lastComboConsumed * card.retainCombo);
+        floatingTexts.add(GAME_W * 0.5, GAME_H * 0.28, `流转 +${apRestore}AP`, COLORS.greenBright, 16);
+        audio.playSFX('draw');
+      } else if (cs.lastPlayedKeyword === '连击' || cs.lastPlayedKeyword === '先攻') {
+        // 连击后流转：算作连击
+        comboAdded += (card.comboBonus || 0) + 1;
+        if (card.comboDouble) {
+          cs.comboCount *= 2;
+          floatingTexts.add(GAME_W * 0.5, GAME_H * 0.28, '连击翻倍!', COLORS.combo, 18);
+        }
+        cs.lastPlayedKeyword = '连击';
+        floatingTexts.add(GAME_W * 0.5, GAME_H * 0.3, '流转·连击!', COLORS.greenBright, 16);
+        audio.playSFX('combo');
+      } else {
+        // 流转作为起始
+        block += 3;
+        cs.lastPlayedKeyword = '流转';
+      }
+    }
+    // 猛击处理
+    if (keywords.includes('猛击')) {
+      let consumed = cs.comboCount;
+      cs._lastComboConsumed = consumed;
+      comboConsumed = consumed;
+      let smashDmg = dmg + consumed * (card.comboScale || 4);
+      if (gs.hasRelic('smash_hammer')) smashDmg = Math.floor(smashDmg * 1.5);
+      if (card.threshold && consumed >= card.threshold) {
+        smashDmg += card.thresholdBonus || 0;
+        floatingTexts.add(GAME_W * 0.5, GAME_H * 0.25, '临界突破!', COLORS.orangeBright, 18);
+      }
+      // 处决效果
+      if (card.executeThreshold && cs.enemyHp <= cs.enemyMaxHp * card.executeThreshold) {
+        smashDmg = Math.floor(smashDmg * (card.executeMultiplier || 2));
+        floatingTexts.add(GAME_W * 0.5, GAME_H * 0.22, '处决!', COLORS.redBright, 20);
+      }
+      totalDmg = smashDmg;
+      cs.comboCount = 0;
+      cs.lastPlayedKeyword = '猛击';
+      audio.playSFX('smash');
+      screenShake.trigger(6, 8);
+      // 衔尾蛇之戒
+      gs.relics.forEach(r => { if (r.onSmashConsume) r.onSmashConsume(gs, consumed); });
+    }
+    // 震慑处理
+    if (keywords.includes('震慑')) {
+      let consumed = cs.comboCount;
+      cs._lastComboConsumed = consumed;
+      comboConsumed = consumed;
+      let stunDmg = dmg + consumed * (card.comboScale || 2);
+      totalDmg = stunDmg;
+      let stunStacks = consumed * (card.stunPerCombo || 1);
+      cs.enemyStunStacks += stunStacks;
+      cs.comboCount = 0;
+      cs.lastPlayedKeyword = '震慑';
+      audio.playSFX('stun');
+      floatingTexts.add(GAME_W * 0.5, GAME_H * 0.25, `震慑 +${stunStacks}`, COLORS.purpleBright, 16);
+    }
+    // 异常处理
+    if (keywords.includes('异常')) {
+      if (card.statusType && card.statusAmt) {
+        let amt = card.statusAmt;
+        if (comboAdded > 0 || cs.comboCount > 0) {
+          amt += Math.floor((comboAdded + cs.comboCount) / 2);
+        }
+        if (card.statusPerCombo && cs.comboCount > 0) {
+          amt += cs.comboCount * card.statusPerCombo;
+        }
+        cs.enemyStatuses[card.statusType] = (cs.enemyStatuses[card.statusType] || 0) + amt;
+        let statusName = { burn: '灼烧', freeze: '冻结', corrode: '腐蚀' }[card.statusType] || card.statusType;
+        floatingTexts.add(GAME_W * 0.65, GAME_H * 0.35, `${statusName} +${amt}`, COLORS[card.statusType] || COLORS.purple, 14);
+      }
+      comboAdded += 1;
+      cs.lastPlayedKeyword = '异常';
+    }
+    // 添加连击计数
+    cs.comboCount += comboAdded;
+    // 非猛击/震慑的伤害
+    if (!keywords.includes('猛击') && !keywords.includes('震慑')) {
+      totalDmg = dmg;
+      // 多段攻击
+      if (card.hits) {
+        totalDmg = dmg * card.hits;
+        for (let h = 0; h < card.hits; h++) {
+          setTimeout(() => {
+            this.dealDamageToEnemy(dmg, card);
+          }, h * 100);
+        }
+      }
+    }
+    // 单次伤害
+    if (totalDmg > 0 && !card.hits) {
+      this.dealDamageToEnemy(totalDmg, card);
+    } else if (totalDmg === 0 && card.hits) {
+      // 多段已在上面处理
+    }
+    // 格挡
+    if (block > 0) {
+      cs.playerBlock += block;
+      floatingTexts.add(GAME_W * 0.35, GAME_H * 0.55, `+${block}🛡`, COLORS.blueBright, 16);
+    }
+    // 消耗
+    if (card.exhaust) {
+      cs.exhaustPile.push(card);
+    } else {
+      cs.discardPile.push(card);
+    }
+    // 肾上腺素等特殊效果
+    if (card.extraAp) cs.ap += card.extraAp;
+    if (card.extraDraw) this.drawCards(card.extraDraw);
+    if (card.hpCost) {
+      gs.takeDamage(card.hpCost);
+      floatingTexts.add(GAME_W * 0.3, GAME_H * 0.45, `-${card.hpCost}❤`, COLORS.redBright, 16);
+    }
+    // 检查战斗结束
+    this.checkCombatEnd();
+  }
+  dealDamageToEnemy(dmg, card) {
+    let cs = gs.combatState;
+    // 易伤
+    if (cs.enemyStatuses.vulnerable > 0) dmg = Math.floor(dmg * 1.5);
+    // 虚弱
+    if (cs.playerStatuses.weak > 0) dmg = Math.floor(dmg * 0.75);
+    // 先破盾
+    let remainingDmg = dmg;
+    if (cs.enemyBlock > 0) {
+      let blocked = Math.min(cs.enemyBlock, remainingDmg);
+      cs.enemyBlock -= blocked;
+      remainingDmg -= blocked;
+      floatingTexts.add(GAME_W * 0.65, GAME_H * 0.38, `${blocked}🛡`, COLORS.blue);
+    }
+    if (remainingDmg > 0) {
+      cs.enemyHp -= remainingDmg;
+      floatingTexts.add(GAME_W * 0.68, GAME_H * 0.35, `-${remainingDmg}`, COLORS.redBright, 18);
+      // 血玉髓
+      gs.relics.forEach(r => { if (r.onDealDamage) r.onDealDamage(gs, remainingDmg); });
+      // 受伤动画
+      this.enemyAnim.flashAlpha = 200;
+      this.enemyAnim.shakeX = rand(-4, 4);
+      this.enemyAnim.shakeY = rand(-3, 3);
+      audio.playSFX('hurt');
+      particles.emit(GAME_W * 0.65, GAME_H * 0.4, 8, { color: COLORS.red, size: 3, life: 15, speed: 3 });
+    }
+  }
+  enemyTakeTurn() {
+    let cs = gs.combatState;
+    let intent = this.enemyIntent;
+    // 检查震慑
+    if (cs.enemyStunStacks > 0) {
+      let enemyAp = cs.enemyData.ap || 1;
+      if (cs.bossPhase2 && cs.enemyData.bossPhase2) enemyAp = cs.enemyData.bossPhase2.ap || enemyAp;
+      if (cs.enemyStunStacks >= enemyAp) {
+        cs.enemyStunStacks -= enemyAp;
+        floatingTexts.add(GAME_W * 0.65, GAME_H * 0.3, '震慑! 跳过回合', COLORS.purpleBright, 20);
+        this.endEnemyTurn();
+        return;
+      } else {
+        cs.enemyStunStacks = 0;
+      }
+    }
+    switch (intent.type) {
+      case 'attack':
+        let dmg = intent.dmg;
+        if (cs.enemyFirstAttackHalved) { dmg = Math.floor(dmg / 2); cs.enemyFirstAttackHalved = false; }
+        // 虚弱
+        if (cs.enemyStatuses.weak) dmg = Math.floor(dmg * 0.75);
+        // 玩家格挡
+        let remaining = dmg;
+        if (cs.playerBlock > 0) {
+          let blocked = Math.min(cs.playerBlock, remaining);
+          cs.playerBlock -= blocked;
+          remaining -= blocked;
+          floatingTexts.add(GAME_W * 0.35, GAME_H * 0.5, `${blocked}🛡`, COLORS.blue);
+        }
+        if (remaining > 0) {
+          gs.takeDamage(remaining);
+          floatingTexts.add(GAME_W * 0.3, GAME_H * 0.45, `-${remaining}❤`, COLORS.redBright, 20);
+          this.playerAnim.flashAlpha = 200;
+          this.playerAnim.shakeX = rand(-3, 3);
+          audio.playSFX('hurt');
+          screenShake.trigger(3, 5);
+        }
+        break;
+      case 'defend':
+        cs.enemyBlock += intent.block;
+        floatingTexts.add(GAME_W * 0.65, GAME_H * 0.38, `+${intent.block}🛡`, COLORS.blue);
+        break;
+      case 'buff':
+        if (intent.buffType === 'strength') {
+          cs.enemyData.attackDmg += intent.amt;
+          floatingTexts.add(GAME_W * 0.65, GAME_H * 0.3, `力量+${intent.amt}`, COLORS.orange);
+        }
+        break;
+      case 'debuff':
+        if (intent.debuffType === 'vulnerable') {
+          cs.playerStatuses.vulnerable = (cs.playerStatuses.vulnerable || 0) + intent.amt;
+          floatingTexts.add(GAME_W * 0.3, GAME_H * 0.5, `易伤+${intent.amt}`, COLORS.red);
+        } else if (intent.debuffType === 'weak') {
+          cs.playerStatuses.weak = (cs.playerStatuses.weak || 0) + intent.amt;
+          floatingTexts.add(GAME_W * 0.3, GAME_H * 0.5, `虚弱+${intent.amt}`, COLORS.purple);
+        }
+        break;
+      case 'heal':
+        cs.enemyHp = Math.min(cs.enemyMaxHp, cs.enemyHp + intent.amt);
+        floatingTexts.add(GAME_W * 0.65, GAME_H * 0.3, `+${intent.amt}❤`, COLORS.green);
+        break;
+    }
+    this.endEnemyTurn();
+  }
+  endEnemyTurn() {
+    let cs = gs.combatState;
+    // 敌人状态效果结算
+    this.tickEnemyStatuses();
+    // 玩家状态效果结算
+    this.tickPlayerStatuses();
+    // 检查战斗结束
+    if (this.checkCombatEnd()) return;
+    // 新回合
+    cs.turnPhase = 'player';
+    cs.enemyBlock = 0; // 敌人格挡每回合重置（部分保留取决于设计）
+    // 诅咒骰子
+    if (gs.hasRelic('cursed_dice')) {
+      cs.ap = randInt(0, cs.maxAp);
+      floatingTexts.add(GAME_W * 0.25, GAME_H * 0.85, `AP: ${cs.ap}`, cs.ap > cs.maxAp - 1 ? COLORS.gold : COLORS.textDim, 14);
+    } else {
+      cs.ap = cs.maxAp;
+    }
+    cs.playerBlock = 0;
+    cs.cardsPlayedThisTurn = [];
+    cs.lastPlayedKeyword = null;
+    cs._lastComboConsumed = 0;
+    cs.comboWindow = 0; // 连击窗口每回合重置
+    cs.enemyIntentIndex++;
+    this.generateEnemyIntent();
+    this.drawCards(5);
+    gs.turnNumber++;
+    this.enemyTurnDelay = 0;
+    // Boss阶段2
+    if (cs.enemyData.bossPhase2 && cs.enemyHp <= cs.enemyData.bossPhase2.hpThreshold && !cs.bossPhase2) {
+      cs.bossPhase2 = true;
+      cs.enemyData.attackDmg = cs.enemyData.bossPhase2.attackDmg;
+      cs.enemyData.ap = cs.enemyData.bossPhase2.ap;
+      floatingTexts.add(GAME_W * 0.5, GAME_H * 0.2, 'BOSS进入第二阶段!', COLORS.redBright, 22);
+      audio.playSFX('smash');
+      screenShake.trigger(10, 15);
+    }
+  }
+  tickEnemyStatuses() {
+    let cs = gs.combatState;
+    // 灼烧
+    if (cs.enemyStatuses.burn > 0) {
+      cs.enemyHp -= cs.enemyStatuses.burn;
+      floatingTexts.add(GAME_W * 0.65, GAME_H * 0.4, `🔥-${cs.enemyStatuses.burn}`, COLORS.burn, 14);
+      particles.emit(GAME_W * 0.65, GAME_H * 0.4, 5, { color: COLORS.orange, size: 3, life: 10, speed: 2 });
+      cs.enemyStatuses.burn = Math.floor(cs.enemyStatuses.burn * 0.7); // 灼烧衰减
+    }
+    // 冻结
+    if (cs.enemyStatuses.freeze > 0) {
+      cs.enemyStunStacks += cs.enemyStatuses.freeze;
+      floatingTexts.add(GAME_W * 0.65, GAME_H * 0.42, `❄震慑+${cs.enemyStatuses.freeze}`, COLORS.freeze, 14);
+      cs.enemyStatuses.freeze = Math.floor(cs.enemyStatuses.freeze * 0.5);
+    }
+    // 腐蚀
+    if (cs.enemyStatuses.corrode > 0) {
+      cs.enemyHp -= cs.enemyStatuses.corrode;
+      floatingTexts.add(GAME_W * 0.65, GAME_H * 0.44, `☠-${cs.enemyStatuses.corrode}`, COLORS.poison, 14);
+      cs.enemyStatuses.corrode = Math.max(0, cs.enemyStatuses.corrode - 1);
+    }
+    // 易伤
+    if (cs.enemyStatuses.vulnerable > 0) cs.enemyStatuses.vulnerable--;
+    // 虚弱
+    if (cs.enemyStatuses.weak > 0) cs.enemyStatuses.weak--;
+  }
+  tickPlayerStatuses() {
+    let cs = gs.combatState;
+    if (cs.playerStatuses.vulnerable > 0) cs.playerStatuses.vulnerable--;
+    if (cs.playerStatuses.weak > 0) cs.playerStatuses.weak--;
+    // 清理
+    Object.keys(cs.playerStatuses).forEach(k => {
+      if (cs.playerStatuses[k] <= 0) delete cs.playerStatuses[k];
+    });
+    Object.keys(cs.enemyStatuses).forEach(k => {
+      if (cs.enemyStatuses[k] <= 0) delete cs.enemyStatuses[k];
+    });
+  }
+  checkCombatEnd() {
+    let cs = gs.combatState;
+    if (cs.enemyHp <= 0) {
+      cs.enemyHp = 0;
+      this.battleEnding = true;
+      this.battleResult = 'victory';
+      audio.playSFX('death');
+      setTimeout(() => { this.battleEnding = false; this.onBattleEnd(); }, 1500);
+      return true;
+    }
+    if (gs.hp <= 0) {
+      this.battleEnding = true;
+      this.battleResult = 'defeat';
+      setTimeout(() => { this.battleEnding = false; this.onBattleEnd(); }, 1500);
+      return true;
+    }
+    return false;
+  }
+  onBattleEnd() {
+    if (this.battleResult === 'victory') {
+      audio.playSFX('victory');
+      let node = this.findCurrentNode();
+      let goldReward = node?.type === 'boss' ? 80 : (node?.type === 'elite' ? 50 : 30);
+      gs.gold += goldReward;
+      floatingTexts.add(GAME_W / 2, GAME_H / 2, `💰 +${goldReward}`, COLORS.gold, 20);
+      // 卡牌奖励
+      let cardRewards = this.generateCardRewards(node);
+      this.pendingRewards = { gold: goldReward, cards: cardRewards };
+      this.showRewardScreen = true;
+    } else {
+      gs.scene = 'defeat';
+    }
+  }
+  generateCardRewards(node) {
+    let pool = [];
+    let rarityWeights = { basic: 0, common: 60, uncommon: 30, rare: 10 };
+    if (node?.type === 'elite') rarityWeights = { basic: 0, common: 30, uncommon: 50, rare: 20 };
+    if (node?.type === 'boss') rarityWeights = { basic: 0, common: 0, uncommon: 40, rare: 60 };
+    let available = CARD_DATA.filter(c => c.rarity !== 'basic');
+    let rewards = [];
+    for (let i = 0; i < 3; i++) {
+      let rarity = this.weightedRandom(rarityWeights);
+      let candidates = available.filter(c => c.rarity === rarity);
+      if (candidates.length === 0) candidates = available.filter(c => c.rarity === 'common');
+      let picked = pick(candidates);
+      if (!rewards.find(r => r.id === picked.id)) rewards.push({...picked});
+    }
+    return rewards;
+  }
+  weightedRandom(weights) {
+    let total = Object.values(weights).reduce((a, b) => a + b, 0);
+    let r = Math.random() * total;
+    for (let [key, w] of Object.entries(weights)) {
+      r -= w;
+      if (r <= 0) return key;
+    }
+    return 'common';
+  }
+  update() {
+    super.update();
+    if (this.battleEnding) return;
+    let cs = gs.combatState;
+    // 卡牌动画
+    this.cardAnimations = this.cardAnimations.filter(a => {
+      a.progress += 1 / a.duration;
+      return a.progress < 1;
+    });
+    // 敌人动画衰减
+    this.enemyAnim.shakeX *= 0.8;
+    this.enemyAnim.shakeY *= 0.8;
+    this.enemyAnim.flashAlpha *= 0.85;
+    this.playerAnim.shakeX *= 0.8;
+    this.playerAnim.shakeY *= 0.8;
+    this.playerAnim.flashAlpha *= 0.85;
+    // 背景符文
+    this.bgGlyphs.forEach(g => { g.x += g.vx; g.y += g.vy; });
+    particles.update();
+    floatingTexts.update();
+    screenShake.update();
+    // 回合开始延迟
+    if (this.turnStartDelay > 0) {
+      this.turnStartDelay--;
+      return;
+    }
+    // 敌人回合
+    if (cs.turnPhase === 'enemy' && this.cardAnimations.length === 0) {
+      if (this.enemyTurnDelay < 30) {
+        this.enemyTurnDelay++;
+      } else {
+        this.enemyTakeTurn();
+      }
+    }
+    // 鼠标悬停
+    if (cs.turnPhase === 'player') {
+      this.hoveredCard = null;
+      let totalCards = cs.hand.length;
+      if (totalCards > 0) {
+        let spacing = totalCards > 6 ? Math.min(95, 580 / totalCards) : 110;
+        let startX = GAME_W * 0.5 - (totalCards - 1) * spacing / 2;
+        // 从右到左检测，优先命中最上层（后绘制）的卡牌
+        for (let i = totalCards - 1; i >= 0; i--) {
+          let card = cs.hand[i];
+          let cx = startX + i * spacing;
+          let cy = GAME_H * 0.78;
+          // 悬停检测使用放大后的判定区域（与放大后的悬停卡大小匹配）
+          let hoverW = CARD_W * 1.12;
+          let hoverH = CARD_H * 1.12;
+          if (mouseX > cx - hoverW / 2 && mouseX < cx + hoverW / 2 &&
+              mouseY > cy - hoverH / 2 && mouseY < cy + hoverH / 2) {
+            this.hoveredCard = card;
+            break;
+          }
+        }
+      }
+      // 奖励界面
+      if (this.showRewardScreen) {
+        this.hoveredRewardIdx = -1;
+        if (this.pendingRewards) {
+          for (let i = 0; i < this.pendingRewards.cards.length; i++) {
+            let rx = GAME_W / 2 + (i - 1) * 170;
+            let ry = GAME_H / 2 + 20;
+            if (mouseX > rx - CARD_W / 2 && mouseX < rx + CARD_W / 2 &&
+                mouseY > ry - CARD_H / 2 && mouseY < ry + CARD_H / 2) {
+              this.hoveredRewardIdx = i;
+            }
+          }
+        }
+        // skip按钮hover
+        let skipX = GAME_W / 2 - 40;
+        let skipY = GAME_H / 2 + 140;
+        this.skipBtn = { x: skipX, y: skipY, w: 80, h: 35, hovered: mouseX > skipX && mouseX < skipX + 80 && mouseY > skipY && mouseY < skipY + 35 };
+      }
+    }
+  }
+  draw() {
+    background(COLORS.bg);
+    // 战斗背景
+    this.drawBattleBackground();
+    screenShake.apply();
+    // 敌人
+    this.drawEnemy();
+    // 玩家
+    this.drawPlayer();
+    // 卡牌
+    this.drawHand();
+    // 手牌动画
+    this.cardAnimations.forEach(a => {
+      let t = a.progress;
+      let x = lerp(a.fromX, a.toX, t);
+      let y = lerp(a.fromY, a.toY, t);
+      let rot = Math.sin(t * Math.PI) * 0.5;
+      let scale = 1 + Math.sin(t * Math.PI) * 0.3;
+      this.drawCardAt( a.card, x, y, rot, scale);
+    });
+    // UI
+    this.drawBattleUI();
+    // 粒子
+    particles.draw();
+    floatingTexts.draw();
+    // 敌人意图
+    this.drawEnemyIntent();
+    // 奖励界面
+    if (this.showRewardScreen) this.drawRewardScreen();
+    // 结束
+    if (this.battleEnding) {
+      fill(0, 180);
+      noStroke();
+      rect(0, 0, GAME_W, GAME_H);
+      fill(this.battleResult === 'victory' ? COLORS.gold : COLORS.red);
+      textAlign(CENTER, CENTER);
+      textSize(40);
+      textStyle(BOLD);
+      text(this.battleResult === 'victory' ? '胜 利' : '败 北', GAME_W / 2, GAME_H / 2);
+    }
+    super.draw();
+  }
+  drawBattleBackground() {
+    // 神秘纹理背景
+    fill(COLORS.bgLight);
+    noStroke();
+    rect(0, 0, GAME_W, GAME_H);
+    // 符文
+    this.bgGlyphs.forEach(g => {
+      fill(COLORS.goldDim);
+      textAlign(CENTER, CENTER);
+      textSize(g.size);
+      text(g.glyph, g.x, g.y);
+    });
+    // 地面线
+    cStroke('goldDim', 40);
+    strokeWeight(1);
+    line(0, GAME_H * 0.7, GAME_W, GAME_H * 0.7);
+    // 战场区域
+    noFill();
+    cStroke('panelEdge', 60);
+    strokeWeight(1);
+    ellipse(GAME_W * 0.65, GAME_H * 0.4, 200, 120);
+    ellipse(GAME_W * 0.3, GAME_H * 0.5, 150, 100);
+  }
+  drawEnemy() {
+    let cs = gs.combatState;
+    let ex = GAME_W * 0.65 + this.enemyAnim.shakeX;
+    let ey = GAME_H * 0.38 + this.enemyAnim.shakeY;
+    let size = cs.enemyData.size || 60;
+    let color = cs.enemyData.color;
+    // 死亡动画
+    if (cs.enemyHp <= 0) {
+      ey += Math.sin(frameCount * 0.2) * 5;
+    }
+    push();
+    translate(ex, ey);
+    // 死亡时的淡出效果
+    if (cs.enemyHp <= 0) {
+      let deathAlpha = 255 * (1 - Math.min(1, frameCount * 0.02));
+      // 用遮罩实现淡出而非tint
+      // (tint在2D模式下会覆盖所有fill颜色，因此改为绘制后叠加遮罩)
+    }
+    // 闪光效果
+    if (this.enemyAnim.flashAlpha > 0) {
+      fill(255, this.enemyAnim.flashAlpha);
+      noStroke();
+      ellipse(0, 0, size * 2.5, size * 2.5);
+    }
+    // 敌人绘制 - 根据类型不同绘制
+    this.drawEnemySprite( cs, size, color);
+    pop();
+    // 敌人血条
+    this.drawEnemyHealthBar( ex, ey - size - 20, size * 2, cs.enemyHp, cs.enemyMaxHp, cs.enemyBlock);
+    // 状态效果
+    let statusY = ey - size - 42;
+    Object.entries(cs.enemyStatuses).forEach(([type, stacks]) => {
+      if (stacks > 0) {
+        let colors = { burn: COLORS.burn, freeze: COLORS.freeze, corrode: COLORS.poison, vulnerable: COLORS.red, weak: COLORS.purple };
+        let icons = { burn: '🔥', freeze: '❄', corrode: '☠', vulnerable: '↓', weak: '↓' };
+        fill(colors[type] || COLORS.white);
+        textAlign(CENTER, CENTER);
+        textSize(11);
+        text(`${icons[type]||''}${stacks}`, ex, statusY);
+        statusY -= 16;
+      }
+    });
+    if (cs.enemyStunStacks > 0) {
+      fill(COLORS.stun);
+      textAlign(CENTER, CENTER);
+      textSize(11);
+      text(`⚡${cs.enemyStunStacks}`, ex, statusY);
+    }
+    // Boss阶段标记
+    if (cs.bossPhase2) {
+      fill(COLORS.redBright);
+      textAlign(CENTER, CENTER);
+      textSize(12);
+      textStyle(BOLD);
+      text('P2', ex, ey - size - 60);
+    }
+  }
+  drawEnemySprite( cs, size, enemyColor) {
+    let c = color(enemyColor);
+    let hpPct = cs.enemyHp / cs.enemyMaxHp;
+    // 根据敌人ID绘制不同外观
+    let enemyId = cs.enemyData.id;
+    // 通用：怪诞扭曲的形态
+    let pulse = 1 + Math.sin(frameCount * 0.08) * 0.06;
+    // 主体
+    fill(c);
+    noStroke();
+    // 触手/肢体
+    for (let i = 0; i < 6; i++) {
+      let angle = (i / 6) * Math.PI * 2 + Math.sin(frameCount * 0.05 + i) * 0.3;
+      let tx = Math.cos(angle) * size * 0.7 * pulse;
+      let ty = Math.sin(angle) * size * 0.5 * pulse;
+      stroke(c);
+      strokeWeight(3);
+      noFill();
+      beginShape();
+      for (let j = 0; j <= 5; j++) {
+        let t = j / 5;
+        let ax = Math.cos(angle + Math.sin(t * 3) * 0.4) * size * (0.3 + t * 0.5) * pulse;
+        let ay = Math.sin(angle + Math.sin(t * 3) * 0.4) * size * (0.2 + t * 0.4) * pulse;
+        curveVertex(ax, ay);
+      }
+      endShape();
+    }
+    // 核心
+    fill(0, 60);
+    noStroke();
+    ellipse(0, 0, size * 1.2 * pulse, size * 1.2 * pulse);
+    fill(c);
+    ellipse(0, 0, size * 0.8 * pulse, size * 0.8 * pulse);
+    // 眼睛/核心光芒
+    let eyeGlow = 0.5 + Math.sin(frameCount * 0.1) * 0.3;
+    fill(255, 255 * eyeGlow);
+    if (enemyId === 'codex_abyssus') {
+      // Boss - 多个眼睛
+      for (let i = 0; i < 5; i++) {
+        let ea = (i / 5) * Math.PI * 2;
+        ellipse(Math.cos(ea) * size * 0.3, Math.sin(ea) * size * 0.3, 8, 8);
+      }
+      // 中心大眼
+      fill(255, 200);
+      ellipse(0, 0, 18, 18);
+      fill(0);
+      ellipse(0, 0, 8, 8);
+      // Boss光环
+      noFill();
+      cStroke('red', 80 + Math.sin(frameCount * 0.05) * 40);
+      strokeWeight(2);
+      ellipse(0, 0, size * 1.8 * pulse, size * 1.8 * pulse);
+    } else if (enemyId.includes('nightmare') || enemyId.includes('bound')) {
+      // 精英 - 更复杂的形态
+      fill(255, 150);
+      ellipse(0, -size * 0.2, 12, 8);
+      ellipse(0, size * 0.2, 12, 8);
+      fill(0);
+      ellipse(0, -size * 0.2, 5, 5);
+      ellipse(0, size * 0.2, 5, 5);
+    } else {
+      // 普通敌人 - 单眼
+      ellipse(0, 0, size * 0.35, size * 0.35);
+      fill(0);
+      ellipse(0, 0, size * 0.15, size * 0.15);
+    }
+    // 受伤闪烁
+    if (hpPct < 0.5) {
+      cFill('red', 60 + Math.sin(frameCount * 0.2) * 30);
+      noStroke();
+      ellipse(0, 0, size * 1.5, size * 1.5);
+    }
+  }
+  drawEnemyHealthBar( x, y, w, hp, maxHp, block) {
+    push();
+    translate(x - w / 2, y);
+    // 背景
+    fill(0, 120);
+    noStroke();
+    rect(0, 0, w, 14, 3);
+    // 格挡
+    if (block > 0) {
+      let bw = (block / (maxHp + block)) * w;
+      fill(COLORS.blue);
+      rect(0, 0, Math.min(bw, w), 14, 3);
+    }
+    // 血量
+    let hw = (hp / maxHp) * w;
+    fill(hp / maxHp > 0.5 ? COLORS.red : (hp / maxHp > 0.25 ? COLORS.orange : COLORS.redBright));
+    rect(0, 0, Math.max(0, hw), 14, 3);
+    // 边框
+    noFill();
+    stroke(COLORS.goldDim);
+    strokeWeight(1);
+    rect(0, 0, w, 14, 3);
+    // 文字
+    fill(COLORS.white);
+    textAlign(CENTER, CENTER);
+    textSize(10);
+    text(`${hp}/${maxHp}`, w / 2, 7);
+    pop();
+  }
+  drawPlayer() {
+    let cs = gs.combatState;
+    let px = GAME_W * 0.3 + this.playerAnim.shakeX;
+    let py = GAME_H * 0.52 + this.playerAnim.shakeY;
+    push();
+    translate(px, py);
+    // 玩家形象 - 神秘学者
+    if (this.playerAnim.flashAlpha > 0) {
+      fill(255, this.playerAnim.flashAlpha);
+      noStroke();
+      ellipse(0, 0, 80, 80);
+    }
+    // 斗篷
+    fill(COLORS.panel);
+    noStroke();
+    triangle(-20, -30, 20, -30, 0, 30);
+    rect(-22, -30, 44, 50, 10);
+    // 头部
+    fill(COLORS.textDim);
+    ellipse(0, -35, 22, 22);
+    // 面具
+    fill(COLORS.goldDim);
+    ellipse(0, -35, 16, 16);
+    fill(COLORS.bg);
+    ellipse(-4, -37, 4, 4);
+    ellipse(4, -37, 4, 4);
+    // 格挡
+    if (cs.playerBlock > 0) {
+      noFill();
+      stroke(COLORS.blueBright);
+      strokeWeight(2);
+      ellipse(0, 0, 60 + Math.sin(frameCount * 0.1) * 5, 60 + Math.sin(frameCount * 0.1) * 5);
+      fill(COLORS.blueBright);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(14);
+      text(cs.playerBlock, 0, -45);
+    }
+    pop();
+    // 玩家生命
+    fill(COLORS.panel);
+    stroke(COLORS.panelEdge);
+    strokeWeight(1);
+    rect(px - 60, py - 60, 120, 20, 4);
+    let hpW = (gs.hp / gs.maxHp) * 116;
+    fill(COLORS.red);
+    noStroke();
+    rect(px - 58, py - 58, hpW, 16, 3);
+    fill(COLORS.white);
+    textAlign(CENTER, CENTER);
+    textSize(10);
+    text(`${gs.hp}/${gs.maxHp}`, px, py - 50);
+    // 玩家状态
+    let pStatusY = py - 82;
+    Object.entries(cs.playerStatuses).forEach(([type, stacks]) => {
+      if (stacks > 0) {
+        fill(type === 'vulnerable' ? COLORS.red : COLORS.purple);
+        textAlign(CENTER, CENTER);
+        textSize(10);
+        text(`${type === 'vulnerable' ? '易伤' : '虚弱'}${stacks}`, px, pStatusY);
+        pStatusY -= 14;
+      }
+    });
+  }
+  drawHand() {
+    let cs = gs.combatState;
+    if (cs.turnPhase !== 'player') return;
+    // 手牌基础位置
+    let totalCards = cs.hand.length;
+    if (totalCards === 0) return;
+    let spacing = totalCards > 6 ? Math.min(95, 580 / totalCards) : 110;
+    let startX = GAME_W * 0.5 - (totalCards - 1) * spacing / 2;
+    // 分两遍绘制：先画非悬停卡，再画悬停卡（置于顶层避免遮挡）
+    let hoveredCard = this.hoveredCard;
+    // 第一遍：绘制非悬停的卡牌
+    for (let i = 0; i < totalCards; i++) {
+      let card = cs.hand[i];
+      if (card === hoveredCard) continue;
+      let cx = startX + i * spacing;
+      let cy = GAME_H * 0.78;
+      let canPlay = this.canPlayCard(card);
+      push();
+      translate(cx, cy);
+      scale(1);
+      this.drawCardAt( card, 0, 0, 0, 1);
+      if (!canPlay) {
+        fill(0, 100);
+        noStroke();
+        rect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 10);
+      }
+      pop();
+    }
+    // 第二遍：绘制悬停卡牌（置于顶层，避免被其他卡牌遮挡）
+    if (hoveredCard) {
+      let idx = cs.hand.indexOf(hoveredCard);
+      if (idx >= 0) {
+        let cx = startX + idx * spacing;
+        let cy = GAME_H * 0.78;
+        let canPlay = this.canPlayCard(hoveredCard);
+        // 向上提起 + 放大 + 轻微倾斜
+        let liftY = -25;
+        push();
+        translate(cx, cy + liftY);
+        scale(1.12);
+        this.drawCardAt( hoveredCard, 0, 0, 0, 1);
+        if (!canPlay) {
+          fill(0, 120);
+          noStroke();
+          rect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 10);
+        }
+        if (canPlay) {
+          noFill();
+          stroke(COLORS.goldBright);
+          strokeWeight(2);
+          rect(-CARD_W / 2 - 3, -CARD_H / 2 - 3, CARD_W + 6, CARD_H + 6, 8);
+        }
+        pop();
+      }
+    }
+  }
+  drawCardAt( card, cx, cy, rot, cardScale) {
+    push();
+    translate(cx, cy);
+    rotate(rot || 0);
+    drawCardVisual(card, 0, 0, cardScale || 1);
+    pop();
+  }
+  drawBattleUI() {
+    let cs = gs.combatState;
+    // AP显示
+    fill(COLORS.panel);
+    stroke(COLORS.panelEdge);
+    strokeWeight(1.5);
+    rect(15, 15, 160, 45, 8);
+    fill(COLORS.gold);
+    textAlign(LEFT, CENTER);
+    textSize(16);
+    textStyle(BOLD);
+    text(`⚡ AP: ${cs.ap}/${cs.maxAp}`, 28, 37);
+    // 连击计数
+    if (cs.comboCount > 0 || cs.comboWindow > 0) {
+      let comboX = 190;
+      let comboW = cs.comboWindow > 0 ? 130 : 100;
+      fill(COLORS.panel);
+      stroke(COLORS.combo);
+      strokeWeight(2);
+      rect(comboX, 15, comboW, 45, 8);
+      fill(COLORS.combo);
+      noStroke();
+      textAlign(LEFT, CENTER);
+      textSize(16);
+      textStyle(BOLD);
+      let comboLabel = cs.comboCount > 0 ? `🔗 连击 ${cs.comboCount}` : '';
+      if (cs.comboWindow > 0) {
+        comboLabel = `🔗 ${cs.comboCount} [${cs.comboWindow}]`;
+      }
+      text(comboLabel, comboX + 10, 37);
+      // 连击脉冲
+      let pulse = 1 + Math.sin(frameCount * 0.15) * 0.1;
+      noFill();
+      stroke(COLORS.combo);
+      strokeWeight(1);
+      rect(comboX - 2 * pulse, 15 - 2 * pulse, comboW * pulse + 4 * pulse, 49 * pulse, 8);
+    }
+    // 牌堆信息
+    fill(COLORS.panel);
+    stroke(COLORS.panelEdge);
+    strokeWeight(1);
+    rect(15, GAME_H - 50, 100, 40, 6);
+    fill(COLORS.textDim);
+    textAlign(LEFT, CENTER);
+    textSize(11);
+    text(`抽牌堆: ${cs.drawPile.length}`, 22, GAME_H - 38);
+    text(`弃牌堆: ${cs.discardPile.length}`, 22, GAME_H - 22);
+    // 回合信息
+    fill(COLORS.textDim);
+    textAlign(CENTER, CENTER);
+    textSize(11);
+    text(`回合 ${gs.turnNumber + 1}`, GAME_W / 2, 20);
+    // 结束回合按钮
+    let endTurnX = GAME_W - 140;
+    let endTurnY = GAME_H - 55;
+    let endTurnHovered = mouseX > endTurnX && mouseX < endTurnX + 125 && mouseY > endTurnY && mouseY < endTurnY + 40;
+    this.endTurnBtn = { x: endTurnX, y: endTurnY, w: 125, h: 40, hovered: endTurnHovered };
+    if (cs.turnPhase === 'player') {
+      fill(endTurnHovered ? COLORS.gold : COLORS.panel);
+      stroke(endTurnHovered ? COLORS.goldBright : COLORS.goldDim);
+      strokeWeight(1.5);
+      rect(endTurnX, endTurnY, 125, 40, 8);
+      fill(endTurnHovered ? 0 : COLORS.gold);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(14);
+      textStyle(BOLD);
+      text('结束回合', endTurnX + 62, endTurnY + 20);
+    }
+    // 战斗信息
+    if (cs.lastPlayedKeyword) {
+      fill(COLORS.textDim);
+      textAlign(CENTER, CENTER);
+      textSize(10);
+      text(`上个特性: ${cs.lastPlayedKeyword}`, GAME_W / 2, GAME_H - 20);
+    }
+  }
+  drawEnemyIntent() {
+    let cs = gs.combatState;
+    if (!this.enemyIntent || cs.turnPhase !== 'player') return;
+    let ix = GAME_W * 0.65;
+    let iy = GAME_H * 0.15;
+    push();
+    translate(ix, iy);
+    fill(COLORS.panel);
+    stroke(COLORS.panelEdge);
+    strokeWeight(1);
+    rect(-60, -10, 120, 28, 6);
+    let intentText = '';
+    switch (this.enemyIntent.type) {
+      case 'attack': intentText = `⚔ 攻击 ${this.enemyIntent.dmg || 0}`; break;
+      case 'defend': intentText = `🛡 防御 ${this.enemyIntent.block || 0}`; break;
+      case 'buff': intentText = `⬆ 增益`; break;
+      case 'debuff': intentText = `⬇ 减益`; break;
+      case 'heal': intentText = `❤ 治疗`; break;
+      default: intentText = '???';
+    }
+    fill(COLORS.white);
+    textAlign(CENTER, CENTER);
+    textSize(12);
+    textStyle(BOLD);
+    text(`意图: ${intentText}`, 0, 4);
+    pop();
+  }
+  drawRewardScreen() {
+    fill(0, 160);
+    noStroke();
+    rect(0, 0, GAME_W, GAME_H);
+    fill(COLORS.panel);
+    stroke(COLORS.gold);
+    strokeWeight(2);
+    rect(GAME_W / 2 - 300, GAME_H / 2 - 180, 600, 360, 12);
+    fill(COLORS.gold);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(22);
+    textStyle(BOLD);
+    text('选择一张卡牌', GAME_W / 2, GAME_H / 2 - 150);
+    fill(COLORS.text);
+    textSize(14);
+    text(`获得金币: ${this.pendingRewards?.gold || 0}`, GAME_W / 2, GAME_H / 2 - 125);
+    // 奖励卡牌
+    if (this.pendingRewards) {
+      for (let i = 0; i < this.pendingRewards.cards.length; i++) {
+        let card = this.pendingRewards.cards[i];
+        let rx = GAME_W / 2 + (i - 1) * 170;
+        let ry = GAME_H / 2 + 20;
+        let hovered = this.hoveredRewardIdx === i;
+        push();
+        translate(rx, ry);
+        if (hovered) scale(1.08);
+        this.drawCardAt( card, 0, 0, 0, 1);
+        pop();
+      }
+    }
+    // 跳过按钮
+    let skipX = GAME_W / 2 - 40;
+    let skipY = GAME_H / 2 + 140;
+    let skipHovered = mouseX > skipX && mouseX < skipX + 80 && mouseY > skipY && mouseY < skipY + 35;
+    this.skipBtn = { x: skipX, y: skipY, w: 80, h: 35, hovered: skipHovered };
+    fill(skipHovered ? COLORS.panel : COLORS.bgLight);
+    stroke(COLORS.textDim);
+    strokeWeight(1);
+    rect(skipX, skipY, 80, 35, 6);
+    fill(COLORS.textDim);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(12);
+    text('跳过', skipX + 40, skipY + 18);
+  }
+  mousePressed() {
+    if (this.battleEnding) return;
+    let cs = gs.combatState;
+    // 奖励界面选择
+    if (this.showRewardScreen) {
+      if (this.hoveredRewardIdx >= 0 && this.pendingRewards) {
+        let card = this.pendingRewards.cards[this.hoveredRewardIdx];
+        gs.addCard(card);
+        audio.playSFX('card_play');
+        this.finishReward();
+        return;
+      }
+      if (this.skipBtn && this.skipBtn.hovered) {
+        this.finishReward();
+        return;
+      }
+      return;
+    }
+    // 点击卡牌
+    if (cs.turnPhase === 'player' && this.hoveredCard && this.canPlayCard(this.hoveredCard)) {
+      this.playCard(this.hoveredCard);
+      return;
+    }
+    // 结束回合
+    if (this.endTurnBtn && this.endTurnBtn.hovered && cs.turnPhase === 'player') {
+      cs.turnPhase = 'enemy';
+      this.enemyTurnDelay = 0;
+      this.cardAnimations = [];
+      return;
+    }
+  }
+  finishReward() {
+    this.showRewardScreen = false;
+    this.pendingRewards = null;
+    let node = this.findCurrentNode();
+    if (node?.type === 'boss') {
+      gs.currentLayer++;
+      gs.currentNodeId = null;
+      gs.floorNumber++;
+      if (gs.currentLayer >= MAP_CONFIG.layers.length) {
+        gs.scene = 'victory';
+      } else {
+        gs.scene = 'map';
+      }
+    } else {
+      gs.scene = 'map';
+    }
+  }
+}
+
+// ==================== 商店场景 ====================
+class ShopScene extends Scene {
+  enter() {
+    super.enter();
+    audio.playShopBGM();
+    this.cardsForSale = this.generateShopCards();
+    this.relicsForSale = this.generateShopRelics();
+    this.hoveredCardIdx = -1;
+    this.hoveredRelicIdx = -1;
+    this.removeCost = Math.floor(75 * (1 - gs.getShopDiscount()));
+    this.bgGlyphs = [];
+    for (let i = 0; i < 12; i++) {
+      this.bgGlyphs.push({ x: rand(0, GAME_W), y: rand(0, GAME_H), vx: rand(-0.1, 0.1), vy: rand(-0.3, -0.05), glyph: pick(['💰','⚖','✧','◆','●','★']), size: rand(14, 28) });
+    }
+  }
+  generateShopCards() {
+    let cards = [];
+    let pool = CARD_DATA.filter(c => c.rarity !== 'basic');
+    for (let i = 0; i < 5; i++) {
+      let card = {...pick(pool)};
+      card.price = Math.floor((card.rarity === 'rare' ? 120 : (card.rarity === 'uncommon' ? 70 : 40)) * (1 - gs.getShopDiscount()));
+      cards.push(card);
+    }
+    return cards;
+  }
+  generateShopRelics() {
+    let relics = [];
+    let pool = [...RELIC_DATA];
+    for (let i = 0; i < 3; i++) {
+      let relic = {...pick(pool)};
+      relic.price = Math.floor((relic.rarity === 'rare' ? 200 : (relic.rarity === 'uncommon' ? 120 : 70)) * (1 - gs.getShopDiscount()));
+      relics.push(relic);
+    }
+    return relics;
+  }
+  update() {
+    super.update();
+    this.bgGlyphs.forEach(g => { g.x += g.vx; g.y += g.vy; });
+    this.hoveredCardIdx = -1;
+    this.hoveredRelicIdx = -1;
+    // 卡牌悬停
+    for (let i = 0; i < this.cardsForSale.length; i++) {
+      let cx = 200 + i * 170;
+      let cy = GAME_H * 0.35;
+      if (mouseX > cx - CARD_W / 2 && mouseX < cx + CARD_W / 2 && mouseY > cy - CARD_H / 2 && mouseY < cy + CARD_H / 2 + 30) {
+        this.hoveredCardIdx = i;
+      }
+    }
+    // 遗物悬停
+    for (let i = 0; i < this.relicsForSale.length; i++) {
+      let rx = 180 + i * 200;
+      let ry = GAME_H * 0.68;
+      if (mouseX > rx - 50 && mouseX < rx + 50 && mouseY > ry - 50 && mouseY < ry + 70) {
+        this.hoveredRelicIdx = i;
+      }
+    }
+    // 删牌按钮
+    let delX = GAME_W - 160;
+    let delY = GAME_H * 0.35;
+    this.delBtnHovered = mouseX > delX && mouseX < delX + 130 && mouseY > delY && mouseY < delY + 50;
+    // 离开按钮
+    let leaveX = GAME_W - 130;
+    let leaveY = GAME_H * 0.88;
+    this.leaveBtnHovered = mouseX > leaveX && mouseX < leaveX + 110 && mouseY > leaveY && mouseY < leaveY + 40;
+  }
+  draw() {
+    background(COLORS.bg);
+    // 背景
+    this.bgGlyphs.forEach(g => {
+      fill(COLORS.goldDim);
+      textAlign(CENTER, CENTER);
+      textSize(g.size);
+      text(g.glyph, g.x, g.y);
+    });
+    // 标题
+    fill(COLORS.gold);
+    textAlign(CENTER, CENTER);
+    textSize(28);
+    textStyle(BOLD);
+    text('⚜ 深 渊 商 店 ⚜', GAME_W / 2, 40);
+    // 金币
+    fill(COLORS.gold);
+    textSize(16);
+    text(`💰 ${gs.gold}`, GAME_W / 2, 70);
+    // 卡牌
+    fill(COLORS.textDim);
+    textAlign(LEFT, CENTER);
+    textSize(14);
+    text('卡牌:', 50, GAME_H * 0.2);
+    for (let i = 0; i < this.cardsForSale.length; i++) {
+      let card = this.cardsForSale[i];
+      let cx = 200 + i * 170;
+      let cy = GAME_H * 0.35;
+      let hovered = this.hoveredCardIdx === i;
+      let affordable = gs.gold >= card.price;
+      push();
+      translate(cx, cy);
+      if (hovered) scale(1.08);
+      this.drawCardAt( card, 0, 0, 0, 1);
+      // 价格
+      fill(affordable ? COLORS.gold : COLORS.red);
+      textAlign(CENTER, CENTER);
+      textSize(12);
+      text(`💰${card.price}`, 0, CARD_H / 2 + 16);
+      pop();
+    }
+    // 遗物
+    fill(COLORS.textDim);
+    textAlign(LEFT, CENTER);
+    textSize(14);
+    text('遗物:', 50, GAME_H * 0.55);
+    for (let i = 0; i < this.relicsForSale.length; i++) {
+      let relic = this.relicsForSale[i];
+      let rx = 180 + i * 200;
+      let ry = GAME_H * 0.68;
+      let hovered = this.hoveredRelicIdx === i;
+      let affordable = gs.gold >= relic.price;
+      fill(COLORS.panel);
+      stroke(hovered ? COLORS.gold : COLORS.panelEdge);
+      strokeWeight(hovered ? 2 : 1);
+      rect(rx - 60, ry - 40, 120, 90, 8);
+      fill(COLORS.gold);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(24);
+      text(relic.icon, rx, ry - 20);
+      fill(COLORS.text);
+      textSize(11);
+      text(relic.name, rx, ry + 5);
+      fill(affordable ? COLORS.gold : COLORS.red);
+      textSize(10);
+      text(`💰${relic.price}`, rx, ry + 22);
+      // 描述tooltip
+      if (hovered) {
+        fill(COLORS.panel);
+        stroke(COLORS.gold);
+        strokeWeight(1);
+        rect(rx - 90, ry - 85, 180, 40, 6);
+        fill(COLORS.text);
+        noStroke();
+        textSize(9);
+        text(relic.desc, rx, ry - 65);
+      }
+    }
+    // 删牌
+    let delX = GAME_W - 160;
+    let delY = GAME_H * 0.35;
+    fill(this.delBtnHovered ? COLORS.gold : COLORS.panel);
+    stroke(this.delBtnHovered ? COLORS.goldBright : COLORS.red);
+    strokeWeight(1.5);
+    rect(delX, delY, 130, 50, 8);
+    fill(COLORS.red);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(14);
+    text('移除一张卡牌', delX + 65, delY + 18);
+    fill(COLORS.gold);
+    textSize(11);
+    text(`💰${this.removeCost}`, delX + 65, delY + 38);
+    // 离开
+    let leaveX = GAME_W - 130;
+    let leaveY = GAME_H * 0.88;
+    fill(this.leaveBtnHovered ? COLORS.gold : COLORS.panel);
+    stroke(COLORS.goldDim);
+    strokeWeight(1);
+    rect(leaveX, leaveY, 110, 40, 8);
+    fill(COLORS.text);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(14);
+    text('离开商店', leaveX + 55, leaveY + 20);
+    super.draw();
+  }
+  drawCardAt( card, cx, cy, rot, cardScale) {
+    push();
+    translate(cx, cy);
+    rotate(rot || 0);
+    drawCardVisual(card, 0, 0, cardScale || 1);
+    pop();
+  }
+  mousePressed() {
+    // 购买卡牌
+    if (this.hoveredCardIdx >= 0) {
+      let card = this.cardsForSale[this.hoveredCardIdx];
+      if (gs.gold >= card.price) {
+        gs.gold -= card.price;
+        gs.addCard(card);
+        this.cardsForSale.splice(this.hoveredCardIdx, 1);
+        audio.playSFX('gold');
+      }
+      return;
+    }
+    // 购买遗物
+    if (this.hoveredRelicIdx >= 0) {
+      let relic = this.relicsForSale[this.hoveredRelicIdx];
+      if (gs.gold >= relic.price) {
+        gs.gold -= relic.price;
+        gs.addRelic(relic);
+        this.relicsForSale.splice(this.hoveredRelicIdx, 1);
+        audio.playSFX('gold');
+      }
+      return;
+    }
+    // 删牌
+    if (this.delBtnHovered && gs.gold >= this.removeCost) {
+      gs.gold -= this.removeCost;
+      gs.scene = 'remove_card';
+      return;
+    }
+    // 离开
+    if (this.leaveBtnHovered) {
+      gs.scene = 'map';
+    }
+  }
+}
+
+// ==================== 事件场景 ====================
+class EventScene extends Scene {
+  enter() {
+    super.enter();
+    audio.playShopBGM();
+    this.event = pick(EVENT_DATA);
+    this.hoveredChoice = -1;
+    this.resultText = null;
+    this.continueBtn = null;
+  }
+  update() {
+    super.update();
+    this.hoveredChoice = -1;
+    if (this.resultText) {
+      let contX = GAME_W/2 - 60;
+      let contY = 430;
+      let contHovered = mouseX > contX && mouseX < contX + 120 && mouseY > contY && mouseY < contY + 40;
+      this.continueBtn = { x: contX, y: contY, w: 120, h: 40, hovered: contHovered };
+      return;
+    }
+    let panelW = 600;
+    let panelH = 580;
+    let panelX = GAME_W/2 - panelW/2;
+    let panelY = 50;
+    let btnW = panelW - 80;
+    let btnH = 70;
+    let btnX = panelX + 40;
+    let startY = panelY + 230;
+    for (let i = 0; i < this.event.choices.length; i++) {
+      let cy = startY + i * 85;
+      if (mouseX > btnX && mouseX < btnX + btnW && mouseY > cy && mouseY < cy + btnH) {
+        this.hoveredChoice = i;
+      }
+    }
+  }
+  draw() {
+    background(COLORS.bg);
+    // 神秘背景
+    for (let i = 0; i < 20; i++) {
+      let x = (i * 137 + frameCount * 0.1) % GAME_W;
+      let y = (i * 89) % GAME_H;
+      cFill('purple', 20);
+      textAlign(CENTER, CENTER);
+      textSize(16);
+      text('?', x, y);
+    }
+    let panelW = 600;
+    let panelH = 580;
+    let panelX = GAME_W/2 - panelW/2;
+    let panelY = 50;
+    // 事件面板
+    fill(COLORS.panel);
+    stroke(COLORS.purple);
+    strokeWeight(2);
+    rect(panelX, panelY, panelW, panelH, 12);
+    // 标题装饰线
+    cStroke('goldDim', 80);
+    strokeWeight(1);
+    line(GAME_W/2 - 100, panelY + 45, GAME_W/2 + 100, panelY + 45);
+    // 事件名称
+    fill(COLORS.gold);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(22);
+    textStyle(BOLD);
+    text(this.event.name, GAME_W/2, panelY + 25);
+    // 描述区域
+    fill(COLORS.text);
+    textSize(14);
+    textStyle(NORMAL);
+    let descY = panelY + 55;
+    let descMaxH = 140;
+    drawCenteredText(this.event.desc, GAME_W/2, descY, panelW - 60, descMaxH, 18);
+    // 装饰线
+    cStroke('goldDim', 80);
+    strokeWeight(1);
+    line(panelX + 40, panelY + 200, panelX + panelW - 40, panelY + 200);
+    // 选择或结果
+    if (!this.resultText) {
+      let startY = panelY + 220;
+      let btnW = panelW - 80;
+      let btnH = 70;
+      let btnX = panelX + 40;
+      for (let i = 0; i < this.event.choices.length; i++) {
+        let choice = this.event.choices[i];
+        let cy = startY + i * 85;
+        let hovered = this.hoveredChoice === i;
+        // 选择框
+        fill(hovered ? COLORS.gold : COLORS.bgLight);
+        stroke(hovered ? COLORS.goldBright : COLORS.panelEdge);
+        strokeWeight(1.5);
+        rect(btnX, cy, btnW, btnH, 8);
+        // 按钮内容
+        fill(hovered ? 0 : COLORS.text);
+        textSize(13);
+        textStyle(BOLD);
+        drawCenteredText(choice.text, btnX + btnW/2, cy + 8, btnW - 20, btnH - 16, 14);
+      }
+    } else {
+      // 结果文本
+      fill(COLORS.text);
+      textSize(15);
+      textStyle(BOLD);
+      let resultY = panelY + 230;
+      drawCenteredText(this.resultText, GAME_W/2, resultY, panelW - 60, 160, 20);
+      // 继续按钮
+      let contX = GAME_W/2 - 60;
+      let contY = 430;
+      let contHovered = mouseX > contX && mouseX < contX + 120 && mouseY > contY && mouseY < contY + 40;
+      this.continueBtn = { x: contX, y: contY, w: 120, h: 40, hovered: contHovered };
+      fill(contHovered ? COLORS.gold : COLORS.panel);
+      stroke(COLORS.goldDim);
+      strokeWeight(1);
+      rect(contX, contY, 120, 40, 8);
+      fill(contHovered ? 0 : COLORS.text);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(14);
+      text('继续', contX + 60, contY + 20);
+    }
+    super.draw();
+  }
+  mousePressed() {
+    if (this.resultText) {
+      if (this.continueBtn && this.continueBtn.hovered) {
+        gs.scene = 'map';
+      }
+      return;
+    }
+    if (this.hoveredChoice >= 0) {
+      this.applyChoice(this.event.choices[this.hoveredChoice]);
+    }
+  }
+  applyChoice(choice) {
+    switch (choice.effect) {
+      case 'gain_relic':
+        let relic = pick(RELIC_DATA);
+        gs.addRelic(relic);
+        this.resultText = `获得了遗物：${relic.name}！`;
+        audio.playSFX('gold');
+        break;
+      case 'blood_sacrifice':
+        gs.takeDamage(choice.hpCost || 10);
+        let rareCards = CARD_DATA.filter(c => c.rarity === 'rare' || c.rarity === 'uncommon');
+        let card = pick(rareCards);
+        gs.addCard(card);
+        this.resultText = `失去${choice.hpCost}HP，获得了卡牌：${card.name}！`;
+        audio.playSFX('heal');
+        break;
+      case 'trade':
+        if (gs.gold >= (choice.goldCost || 30)) {
+          gs.gold -= choice.goldCost;
+          let cards = CARD_DATA.filter(c => c.rarity !== 'basic');
+          gs.addCard(pick(cards));
+          gs.addCard(pick(cards));
+          this.resultText = '获得了2张随机卡牌！';
+          audio.playSFX('gold');
+        } else {
+          this.resultText = '金币不足...';
+        }
+        break;
+      case 'cursed_gift':
+        let cursed = pick(CARD_DATA.filter(c => c.rarity !== 'basic'));
+        gs.addCard(cursed);
+        if (Math.random() < 0.4) {
+          gs.takeDamage(5);
+          this.resultText = `获得${cursed.name}，但被诅咒失去了5HP...`;
+        } else {
+          this.resultText = `获得了${cursed.name}！看来运气不错。`;
+        }
+        break;
+      case 'void_drink':
+        gs.takeDamage(choice.hpCost || 15);
+        let r1 = pick(RELIC_DATA);
+        let r2 = pick(RELIC_DATA.filter(r => r.id !== r1.id));
+        gs.addRelic(r1);
+        gs.addRelic(r2 || r1);
+        this.resultText = `失去${choice.hpCost}HP，获得了遗物：${r1.name}、${r2?.name || r1.name}！`;
+        audio.playSFX('heal');
+        break;
+      case 'remove_card':
+        gs.scene = 'remove_card';
+        return;
+      case 'upgrade_random':
+        let nonBasic = gs.deck.filter(c => c.rarity !== 'basic' && !c.upgraded);
+        if (nonBasic.length > 0) {
+          let toUpgrade = pick(nonBasic);
+          toUpgrade.upgraded = true;
+          toUpgrade.baseDmg = Math.floor((toUpgrade.baseDmg || 0) * 1.3);
+          toUpgrade.baseBlock = Math.floor((toUpgrade.baseBlock || 0) * 1.3);
+          this.resultText = `升级了卡牌：${toUpgrade.name}！`;
+        } else {
+          this.resultText = '没有可升级的卡牌...';
+        }
+        break;
+      case 'gold':
+        gs.gold += (choice.goldAmt || 50);
+        this.resultText = `获得了${choice.goldAmt}金币！`;
+        audio.playSFX('gold');
+        break;
+      case 'gain_card':
+        let newCard = pick(CARD_DATA.filter(c => c.rarity !== 'basic'));
+        gs.addCard(newCard);
+        this.resultText = `获得了卡牌：${newCard.name}！`;
+        break;
+      case 'heal':
+        gs.heal(choice.healAmt || 30);
+        this.resultText = `回复了${choice.healAmt}HP！`;
+        audio.playSFX('heal');
+        break;
+      case 'max_hp':
+        gs.takeDamage(choice.hpCost || 5);
+        gs.maxHp += (choice.maxHpGain || 2);
+        gs.heal(choice.maxHpGain || 2);
+        this.resultText = `失去${choice.hpCost}HP，最大HP+${choice.maxHpGain}！`;
+        break;
+      case 'gain_burn_card':
+        let burnCards = CARD_DATA.filter(c => c.keywords && c.keywords.includes('异常') && c.statusType === 'burn');
+        gs.addCard(burnCards.length > 0 ? pick(burnCards) : pick(CARD_DATA.filter(c => c.rarity !== 'basic')));
+        this.resultText = '获得了一张火焰卡牌！';
+        break;
+      case 'none':
+      default:
+        this.resultText = '你选择了离开...';
+        break;
+    }
+  }
+}
+
+// ==================== 休息场景 ====================
+class RestScene extends Scene {
+  enter() {
+    super.enter();
+    audio.playShopBGM();
+    this.healAmt = Math.floor(gs.maxHp * 0.3);
+    this.healHovered = false;
+    this.upgradeHovered = false;
+    this.leaveHovered = false;
+  }
+  update() {
+    super.update();
+    let hx = GAME_W/2 - 100;
+    let hy = GAME_H * 0.35;
+    this.healHovered = mouseX > hx && mouseX < hx + 200 && mouseY > hy && mouseY < hy + 50;
+    let ux = GAME_W/2 - 100;
+    let uy = GAME_H * 0.5;
+    this.upgradeHovered = mouseX > ux && mouseX < ux + 200 && mouseY > uy && mouseY < uy + 50;
+    let lx = GAME_W/2 - 50;
+    let ly = GAME_H * 0.7;
+    this.leaveHovered = mouseX > lx && mouseX < lx + 100 && mouseY > ly && mouseY < ly + 35;
+  }
+  draw() {
+    background(COLORS.bg);
+    fill(COLORS.green);
+    textAlign(CENTER, CENTER);
+    textSize(28);
+    textStyle(BOLD);
+    text('☤ 休 息 营 地 ☤', GAME_W/2, 60);
+    fill(COLORS.text);
+    textSize(14);
+    text(`❤ ${gs.hp}/${gs.maxHp}`, GAME_W/2, 100);
+    // 休息按钮
+    let hx = GAME_W/2 - 100;
+    let hy = GAME_H * 0.35;
+    fill(this.healHovered ? COLORS.green : COLORS.panel);
+    stroke(COLORS.green);
+    strokeWeight(1.5);
+    rect(hx, hy, 200, 50, 8);
+    fill(COLORS.greenBright);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(16);
+    text(`休息（回复${this.healAmt}HP）`, GAME_W/2, hy + 25);
+    // 升级按钮
+    let ux = GAME_W/2 - 100;
+    let uy = GAME_H * 0.5;
+    fill(this.upgradeHovered ? COLORS.gold : COLORS.panel);
+    stroke(COLORS.gold);
+    strokeWeight(1.5);
+    rect(ux, uy, 200, 50, 8);
+    fill(COLORS.goldBright);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(16);
+    text('升级一张随机卡牌', GAME_W/2, uy + 25);
+    // 离开
+    let lx = GAME_W/2 - 50;
+    let ly = GAME_H * 0.7;
+    fill(this.leaveHovered ? COLORS.gold : COLORS.panel);
+    stroke(COLORS.goldDim);
+    strokeWeight(1);
+    rect(lx, ly, 100, 35, 6);
+    fill(COLORS.text);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(13);
+    text('离开', lx + 50, ly + 18);
+    super.draw();
+  }
+  mousePressed() {
+    if (this.healHovered) {
+      gs.heal(this.healAmt);
+      audio.playSFX('heal');
+      gs.scene = 'map';
+    } else if (this.upgradeHovered) {
+      let candidates = gs.deck.filter(c => !c.upgraded);
+      if (candidates.length > 0) {
+        let card = pick(candidates);
+        card.upgraded = true;
+        card.baseDmg = Math.floor((card.baseDmg || 0) * 1.3);
+        card.baseBlock = Math.floor((card.baseBlock || 0) * 1.3);
+        floatingTexts.add(GAME_W/2, GAME_H/2, `${card.name} 升级!`, COLORS.gold, 20);
+      }
+      gs.scene = 'map';
+    } else if (this.leaveHovered) {
+      gs.scene = 'map';
+    }
+  }
+}
+
+// ==================== 宝藏场景 ====================
+class TreasureScene extends Scene {
+  enter() {
+    super.enter();
+    audio.playShopBGM();
+    this.relics = this.generateRelics();
+    this.hoveredIdx = -1;
+    this.selected = false;
+  }
+  generateRelics() {
+    let pool = [...RELIC_DATA];
+    let relics = [];
+    for (let i = 0; i < 3; i++) {
+      let r = pick(pool);
+      if (!relics.find(x => x.id === r.id)) relics.push({...r});
+    }
+    return relics;
+  }
+  update() {
+    super.update();
+    if (this.selected) return;
+    this.hoveredIdx = -1;
+    for (let i = 0; i < this.relics.length; i++) {
+      let rx = GAME_W/2 + (i - 1) * 180;
+      let ry = GAME_H/2 - 20;
+      if (mouseX > rx - 70 && mouseX < rx + 70 && mouseY > ry - 60 && mouseY < ry + 60) {
+        this.hoveredIdx = i;
+      }
+    }
+  }
+  draw() {
+    background(COLORS.bg);
+    fill(COLORS.goldBright);
+    textAlign(CENTER, CENTER);
+    textSize(28);
+    textStyle(BOLD);
+    text('★ 宝 藏 房 ★', GAME_W/2, 60);
+    fill(COLORS.text);
+    textSize(14);
+    text('选择一个遗物', GAME_W/2, 100);
+    for (let i = 0; i < this.relics.length; i++) {
+      let relic = this.relics[i];
+      let rx = GAME_W/2 + (i - 1) * 180;
+      let ry = GAME_H/2 - 20;
+      let hovered = this.hoveredIdx === i;
+      fill(COLORS.panel);
+      stroke(hovered ? COLORS.goldBright : COLORS.goldDim);
+      strokeWeight(hovered ? 2.5 : 1);
+      rect(rx - 70, ry - 60, 140, 120, 10);
+      fill(COLORS.gold);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(30);
+      text(relic.icon, rx, ry - 20);
+      fill(COLORS.text);
+      textSize(12);
+      textStyle(BOLD);
+      text(relic.name, rx, ry + 10);
+      fill(COLORS.textDim);
+      textSize(9);
+      textStyle(NORMAL);
+      drawCenteredText(relic.desc, rx, ry + 30, 120, 30, 10);
+      if (hovered) {
+        noFill();
+        stroke(COLORS.goldBright);
+        strokeWeight(2);
+        rect(rx - 70, ry - 60, 140, 120, 10);
+      }
+    }
+    super.draw();
+  }
+  mousePressed() {
+    if (this.selected) return;
+    if (this.hoveredIdx >= 0) {
+      let relic = this.relics[this.hoveredIdx];
+      gs.addRelic(relic);
+      this.selected = true;
+      audio.playSFX('gold');
+      floatingTexts.add(GAME_W/2, GAME_H/2, `获得遗物: ${relic.name}`, COLORS.goldBright, 20);
+      setTimeout(() => { gs.scene = 'map'; }, 1000);
+    }
+  }
+}
+
+// ==================== 删牌场景 ====================
+class RemoveCardScene extends Scene {
+  enter() {
+    super.enter();
+    this.hoveredIdx = -1;
+  }
+  update() {
+    super.update();
+    this.hoveredIdx = -1;
+    for (let i = 0; i < gs.deck.length; i++) {
+      let col = i % 5;
+      let row = Math.floor(i / 5);
+      let cx = 150 + col * 160;
+      let cy = 120 + row * 150;
+      if (mouseX > cx - CARD_W/2 && mouseX < cx + CARD_W/2 && mouseY > cy - CARD_H/2 && mouseY < cy + CARD_H/2) {
+        this.hoveredIdx = i;
+      }
+    }
+  }
+  draw() {
+    background(COLORS.bg);
+    fill(COLORS.red);
+    textAlign(CENTER, CENTER);
+    textSize(22);
+    textStyle(BOLD);
+    text('选择要移除的卡牌', GAME_W/2, 40);
+    for (let i = 0; i < gs.deck.length; i++) {
+      let card = gs.deck[i];
+      let col = i % 5;
+      let row = Math.floor(i / 5);
+      let cx = 150 + col * 160;
+      let cy = 120 + row * 150;
+      let hovered = this.hoveredIdx === i;
+      push();
+      translate(cx, cy);
+      if (hovered) scale(1.08);
+      let cardColor = card.color || COLORS.gold;
+      let bgC = color(cardColor);
+      fill(0, 60);
+      noStroke();
+      rect(-CARD_W/2+3, -CARD_H/2+3, CARD_W, CARD_H, 10);
+      fill(red(bgC)*0.15, green(bgC)*0.15, blue(bgC)*0.15);
+      stroke(hovered ? COLORS.red : cardColor);
+      strokeWeight(hovered ? 2.5 : 1.5);
+      rect(-CARD_W/2, -CARD_H/2, CARD_W, CARD_H, 10);
+      fill(cardColor);
+      noStroke();
+      ellipse(-CARD_W/2+20, -CARD_H/2+20, 26, 26);
+      fill(0);
+      textAlign(CENTER, CENTER);
+      textSize(16);
+      textStyle(BOLD);
+      text(card.cost, -CARD_W/2+20, -CARD_H/2+20);
+      fill(cardColor);
+      textSize(12);
+      textStyle(BOLD);
+      drawCenteredText(card.name, 0, -CARD_H/2+28, CARD_W - 20, 16, 14);
+      pop();
+      if (hovered) {
+        cFill('red', 30);
+        noStroke();
+        rect(cx - CARD_W/2 - 5, cy - CARD_H/2 - 5, CARD_W + 10, CARD_H + 10, 12);
+      }
+    }
+    super.draw();
+  }
+  mousePressed() {
+    if (this.hoveredIdx >= 0) {
+      let card = gs.deck[this.hoveredIdx];
+      gs.removeCardByUid(card.uid);
+      audio.playSFX('card_play');
+      gs.scene = 'map';
+    }
+  }
+}
+
+// ==================== 胜利/失败场景 ====================
+class VictoryScene extends Scene {
+  enter() {
+    super.enter();
+    audio.playMapBGM();
+    this.time = 0;
+  }
+  update() { super.update(); this.time++; }
+  draw() {
+    background(COLORS.bg);
+    let t = this.time;
+    // 光晕
+    for (let i = 5; i >= 0; i--) {
+      cFill('gold', 10 + i * 3);
+      textAlign(CENTER, CENTER);
+      textSize(50 + i * 8);
+      textStyle(BOLD);
+      text('深 渊 已 被 征 服', GAME_W/2, GAME_H/2 + Math.sin(t*0.03 + i)*5);
+    }
+    fill(COLORS.goldBright);
+    textSize(48);
+    text('深 渊 已 被 征 服', GAME_W/2, GAME_H/2);
+    fill(COLORS.text);
+    textSize(16);
+    text('点击任意位置重新开始', GAME_W/2, GAME_H*0.65);
+    super.draw();
+  }
+  mousePressed() { gs.reset(); gs.scene = 'title'; }
+}
+
+class DefeatScene extends Scene {
+  enter() { super.enter(); audio.stopBGM(); }
+  update() { super.update(); }
+  draw() {
+    background(COLORS.bg);
+    cFill('red', 100 + Math.sin(frameCount*0.05)*30);
+    textAlign(CENTER, CENTER);
+    textSize(48);
+    textStyle(BOLD);
+    text('坠 入 深 渊', GAME_W/2, GAME_H/2);
+    fill(COLORS.textDim);
+    textSize(16);
+    text('点击任意位置重新开始', GAME_W/2, GAME_H*0.65);
+    super.draw();
+  }
+  mousePressed() { gs.reset(); gs.scene = 'title'; }
+}
+
+// ==================== p5.js 主程序 ====================
+let currentScene = null;
+let scenes = {};
+
+function setup() {
+  let canvas = createCanvas(GAME_W, GAME_H);
+  canvas.parent(document.body);
+  // 确保中文字体可用
+  textFont('Arial');
+  // 初始化全局实例
+  gs = new GameState();
+  events = new EventBus();
+  audio = new AudioManager();
+  particles = new ParticleSystem();
+  floatingTexts = new FloatingTextManager();
+  screenShake = new ScreenShake();
+  // 创建场景
+  scenes = {
+    title: new TitleScene(),
+    map: new MapScene(),
+    battle: new BattleScene(),
+    shop: new ShopScene(),
+    event: new EventScene(),
+    rest: new RestScene(),
+    treasure: new TreasureScene(),
+    remove_card: new RemoveCardScene(),
+    victory: new VictoryScene(),
+    defeat: new DefeatScene(),
+  };
+  currentScene = scenes[gs.scene];
+  currentScene.enter();
+}
+
+// ==================== 独立卡牌绘制函数（供所有场景共用） ====================
+function drawCardVisual(card, cx, cy, cardScale) {
+  push();
+  translate(cx, cy);
+  scale(cardScale || 1);
+  let c = card.cost;
+  let cs = gs.combatState;
+  if (cs && card.keywords && card.keywords.includes('先攻') && cs.cardsPlayedThisTurn && cs.cardsPlayedThisTurn.length === 0) c = Math.max(0, c - 1);
+  if (gs.hasRelic && gs.hasRelic('first_strike_charm') && cs && cs.cardsPlayedThisTurn && cs.cardsPlayedThisTurn.length === 0) c = Math.max(0, c - 1);
+  // 阴影
+  fill(0, 60);
+  noStroke();
+  rect(-CARD_W / 2 + 3, -CARD_H / 2 + 3, CARD_W, CARD_H, 10);
+  // 卡牌主体
+  let cardColor = card.color || COLORS.gold;
+  let bgC = color(cardColor);
+  fill(red(bgC) * 0.15, green(bgC) * 0.15, blue(bgC) * 0.15);
+  stroke(cardColor);
+  strokeWeight(1.5);
+  rect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 10);
+  // 内边框
+  stroke(cardColor);
+  strokeWeight(0.5);
+  noFill();
+  rect(-CARD_W / 2 + 6, -CARD_H / 2 + 6, CARD_W - 12, CARD_H - 12, 6);
+  // 装饰角
+  fill(cardColor);
+  noStroke();
+  let cornerSize = 8;
+  [-1, 1].forEach(sx => {
+    [-1, 1].forEach(sy => {
+      ellipse(sx * (CARD_W / 2 - 10), sy * (CARD_H / 2 - 10), cornerSize, cornerSize);
+    });
+  });
+  // 费用
+  fill(cardColor);
+  noStroke();
+  ellipse(-CARD_W / 2 + 20, -CARD_H / 2 + 20, 26, 26);
+  fill(0);
+  textAlign(CENTER, CENTER);
+  textSize(16);
+  textStyle(BOLD);
+  text(c, -CARD_W / 2 + 20, -CARD_H / 2 + 20);
+  // 升级标记
+  if (card.upgraded) {
+    fill(COLORS.goldBright);
+    textSize(10);
+    text('+', -CARD_W / 2 + 20, -CARD_H / 2 + 40);
+  }
+  // 卡牌名称
+  fill(cardColor);
+  textSize(12);
+  textStyle(BOLD);
+  let nameMaxW = CARD_W - 20;
+  let nameH = 16;
+  drawCenteredText(card.name, 0, -CARD_H / 2 + 28, nameMaxW, nameH, 14);
+  // 类型
+  fill(cardColor);
+  textSize(9);
+  let typeText = card.type === 'attack' ? '攻击' : (card.type === 'skill' ? '技能' : '能力');
+  textAlign(CENTER, TOP);
+  text(typeText, 0, -CARD_H / 2 + 28 + nameH + 2);
+  // 分隔线
+  stroke(cardColor);
+  strokeWeight(0.5);
+  let sepY = -CARD_H / 2 + 28 + nameH + 18;
+  line(-CARD_W / 2 + 15, sepY, CARD_W / 2 - 15, sepY);
+  // 描述
+  let desc = (card.desc || '').replace('{dmg}', card.baseDmg || 0).replace('{block}', card.baseBlock || 0);
+  if (card.comboBonus) desc = desc.replace('{combo_bonus}', card.comboBonus);
+  if (card.comboBlock) desc = desc.replace('{combo_block}', card.comboBlock);
+  if (card.comboScale) desc = desc.replace('{combo_scale}', card.comboScale);
+  if (card.statusAmt) desc = desc.replace('{burn}', card.statusAmt).replace('{freeze}', card.statusAmt).replace('{corrode}', card.statusAmt).replace('{poison}', card.statusAmt);
+  fill(COLORS.text);
+  textSize(9);
+  textStyle(NORMAL);
+  let hasKw = card.keywords && card.keywords.length > 0;
+  let descMaxH = hasKw ? (CARD_H / 2 - 30) - (sepY + 8) : (CARD_H / 2 - 12) - (sepY + 8);
+  descMaxH = Math.max(20, descMaxH);
+  drawCenteredText(desc, 0, sepY + 8, CARD_W - 20, descMaxH, 11);
+  // 特性标签
+  if (hasKw) {
+    let ky = CARD_H / 2 - 30;
+    card.keywords.forEach(kw => {
+      let kwColor = { '先攻': COLORS.gold, '连击': COLORS.combo, '猛击': COLORS.red, '震慑': COLORS.purple, '异常': COLORS.green, '流转': COLORS.greenBright }[kw] || COLORS.textDim;
+      fill(kwColor);
+      textSize(8);
+      textStyle(BOLD);
+      text(kw, 0, ky);
+      ky += 12;
+    });
+  }
+  // 伪3D光泽
+  fill(255, 8);
+  noStroke();
+  rect(-CARD_W / 2 + 8, -CARD_H / 2 + 8, CARD_W - 16, CARD_H * 0.35, 6);
+  pop();
+}
+
+// ==================== 遗物视觉绘制（怪诞艺术风格） ====================
+function drawRelicVisual(relic, cx, cy, size) {
+  push();
+  translate(cx, cy);
+  let s = size || 50;
+  // 安全检查
+  if (!relic || !relic.id) {
+    // 默认绘制
+    noStroke();
+    fill(50, 50, 70);
+    ellipse(0, -s*0.1, s*0.6, s*0.6);
+    fill(200, 180, 100);
+    textAlign(CENTER, CENTER);
+    textSize(s * 0.3);
+    text('?', 0, -s*0.05);
+    pop();
+    return;
+  }
+  let id = relic.id;
+  // 遗物底座（使用辅助函数确保颜色一致性）
+  noStroke();
+  cFill('panel');
+  ellipse(0, s * 0.3, s * 1.2, s * 0.35);
+  cStroke('goldDim');
+  strokeWeight(1);
+  noFill();
+  ellipse(0, s * 0.3, s * 1.2, s * 0.35);
+  noStroke();
+  // 根据遗物ID绘制独特视觉
+  switch (id) {
+    case 'blood_ruby': {
+      // 血玉髓 - 深红宝石带脉动血管
+      fill(139, 20, 30);
+      noStroke();
+      ellipse(0, -s*0.1, s*0.7, s*0.85);
+      fill(180, 30, 40);
+      ellipse(0, -s*0.1, s*0.5, s*0.65);
+      fill(220, 60, 70);
+      ellipse(-s*0.1, -s*0.2, s*0.25, s*0.3);
+      // 血管
+      stroke(80, 10, 20);
+      strokeWeight(1.5);
+      noFill();
+      bezier(-s*0.3, -s*0.1, -s*0.1, -s*0.4, s*0.1, -s*0.3, s*0.3, -s*0.1);
+      bezier(-s*0.2, s*0.1, 0, s*0.05, s*0.15, s*0.2, s*0.25, s*0.15);
+      noStroke();
+      break;
+    }
+    case 'ap_tome': {
+      // AP水晶 - 发光晶体
+      let pulse = sin(frameCount * 0.08) * 0.15 + 0.85;
+      fill(100, 200, 255, 60 * pulse);
+      noStroke();
+      ellipse(0, -s*0.1, s*1.1*pulse, s*1.2*pulse);
+      fill(140, 220, 255);
+      stroke(200, 240, 255);
+      strokeWeight(1);
+      // 六边形晶体
+      beginShape();
+      for (let i = 0; i < 6; i++) {
+        let ang = i * PI / 3 - PI / 2;
+        vertex(cos(ang) * s * 0.4, sin(ang) * s * 0.5 - s * 0.1);
+      }
+      endShape(CLOSE);
+      noStroke();
+      fill(220, 250, 255);
+      ellipse(-s*0.08, -s*0.15, s*0.15, s*0.2);
+      noStroke();
+      break;
+    }
+    case 'first_strike_charm': {
+      // 先攻之印 - 新月印记
+      fill(20, 20, 40);
+      noStroke();
+      ellipse(0, -s*0.1, s*0.8, s*0.85);
+      fill(50, 50, 80);
+      arc(0, -s*0.1, s*0.7, s*0.7, PI * 0.2, PI * 1.8);
+      fill(255, 220, 100);
+      ellipse(-s*0.12, -s*0.2, s*0.45, s*0.45);
+      fill(120, 100, 40);
+      ellipse(-s*0.12, -s*0.2, s*0.3, s*0.3);
+      fill(255, 240, 150);
+      ellipse(-s*0.15, -s*0.25, s*0.12, s*0.15);
+      noStroke();
+      break;
+    }
+    case 'combo_engine': {
+      // 连击引擎 - 齿轮组
+      fill(60, 60, 80);
+      noStroke();
+      ellipse(0, -s*0.1, s*0.9, s*0.9);
+      fill(100, 100, 130);
+      ellipse(0, -s*0.1, s*0.7, s*0.7);
+      // 齿轮齿
+      fill(80, 80, 110);
+      for (let i = 0; i < 8; i++) {
+        let cang = i * PI / 4 + frameCount * 0.02;
+        ellipse(cos(cang) * s * 0.45, sin(cang) * s * 0.45 - s*0.1, s*0.12, s*0.12);
+      }
+      fill(40, 40, 60);
+      ellipse(0, -s*0.1, s*0.25, s*0.25);
+      // 小齿轮
+      fill(120, 100, 60);
+      ellipse(s*0.35, -s*0.4, s*0.3, s*0.3);
+      fill(200, 170, 80);
+      ellipse(s*0.35, -s*0.4, s*0.15, s*0.15);
+      noStroke();
+      break;
+    }
+    case 'void_mask': {
+      // 虚空面具 - 黑色面具空心眼
+      fill(15, 10, 25);
+      noStroke();
+      ellipse(0, -s*0.1, s*0.85, s*0.95);
+      fill(30, 20, 45);
+      ellipse(0, -s*0.15, s*0.7, s*0.8);
+      // 眼窝 - 发光
+      let glow = sin(frameCount * 0.1) * 0.3 + 0.7;
+      fill(100, 50, 200, glow * 255);
+      ellipse(-s*0.18, -s*0.2, s*0.2, s*0.15);
+      ellipse(s*0.18, -s*0.2, s*0.2, s*0.15);
+      // 嘴
+      fill(10, 5, 20);
+      rect(-s*0.12, s*0.05, s*0.24, s*0.08, 2);
+      // 条纹
+      stroke(60, 40, 80);
+      strokeWeight(1);
+      line(-s*0.35, -s*0.3, -s*0.25, -s*0.4);
+      line(s*0.35, -s*0.3, s*0.25, -s*0.4);
+      noStroke();
+      break;
+    }
+    case 'golden_scales': {
+      // 黄金天平
+      stroke(180, 140, 30);
+      strokeWeight(2);
+      noFill();
+      line(0, -s*0.45, 0, s*0.2);
+      line(-s*0.35, -s*0.2, s*0.35, -s*0.2);
+      // 左右盘
+      fill(200, 160, 40);
+      noStroke();
+      ellipse(-s*0.35, -s*0.05, s*0.3, s*0.1);
+      ellipse(s*0.35, -s*0.35, s*0.3, s*0.1);
+      // 支柱
+      fill(150, 110, 20);
+      rect(-s*0.08, s*0.05, s*0.16, s*0.2);
+      // 装饰球
+      fill(220, 180, 60);
+      ellipse(0, -s*0.5, s*0.1, s*0.1);
+      noStroke();
+      break;
+    }
+    case 'flow_catalyst': {
+      // 流转催化剂 - 漩涡
+      let ang = frameCount * 0.05;
+      noStroke();
+      for (let i = 0; i < 3; i++) {
+        let r = s * 0.35 - i * s * 0.1;
+        for (let j = 0; j < 6; j++) {
+          let fa = ang + j * PI / 3 + i * 0.5;
+          let hueOffset = (i * 80 + frameCount * 2) % 360;
+          let flowR = 100 + (hueOffset % 120);
+          let flowG = 150 + ((hueOffset + 60) % 80);
+          let flowB = 200;
+          fill(flowR, flowG, flowB, 200);
+          ellipse(cos(fa) * r, sin(fa) * r - s*0.1, s*0.1, s*0.1);
+        }
+      }
+      fill(255, 255, 255, 200);
+      ellipse(0, -s*0.1, s*0.15, s*0.15);
+      noStroke();
+      break;
+    }
+    case 'smash_hammer': {
+      // 粉碎之锤
+      // 锤头
+      fill(80, 70, 60);
+      noStroke();
+      rect(-s*0.35, -s*0.45, s*0.7, s*0.35, 4);
+      fill(120, 110, 90);
+      rect(-s*0.3, -s*0.4, s*0.6, s*0.15, 3);
+      // 裂纹
+      stroke(40, 30, 20);
+      strokeWeight(1.5);
+      line(-s*0.2, -s*0.35, -s*0.1, -s*0.2);
+      line(-s*0.1, -s*0.3, 0, -s*0.25);
+      noStroke();
+      // 锤柄
+      fill(100, 60, 30);
+      noStroke();
+      rect(-s*0.05, -s*0.1, s*0.1, s*0.5);
+      fill(130, 80, 40);
+      rect(-s*0.03, -s*0.1, s*0.06, s*0.5);
+      noStroke();
+      break;
+    }
+    case 'philosopher_stone': {
+      // 贤者之石 - 发光石
+      let pulse2 = sin(frameCount * 0.06) * 0.2 + 0.8;
+      // 光环
+      for (let r = 3; r > 0; r--) {
+        fill(255, 200, 100, 20 * r * pulse2);
+        noStroke();
+        ellipse(0, -s*0.1, s * r * 0.3 * pulse2, s * r * 0.3 * pulse2);
+      }
+      // 主体
+      fill(255, 220, 150);
+      noStroke();
+      ellipse(0, -s*0.1, s*0.5, s*0.6);
+      fill(255, 255, 200);
+      ellipse(-s*0.08, -s*0.2, s*0.2, s*0.25);
+      // 符文
+      stroke(150, 80, 30);
+      strokeWeight(1);
+      noFill();
+      textAlign(CENTER, CENTER);
+      textSize(s * 0.25);
+      text('✦', 0, -s*0.1);
+      noStroke();
+      break;
+    }
+    case 'serpent_ring': {
+      // 衔尾蛇之戒
+      // 戒指
+      fill(180, 140, 60);
+      noStroke();
+      ellipse(0, -s*0.1, s*0.7, s*0.7);
+      fill(30, 25, 20);
+      ellipse(0, -s*0.1, s*0.45, s*0.45);
+      // 蛇身
+      stroke(60, 100, 50);
+      strokeWeight(4);
+      noFill();
+      let t = frameCount * 0.02;
+      for (let i = 0; i < 20; i++) {
+        let sa = (i / 20) * TWO_PI + t;
+        let r1 = s * 0.28 + sin(i * 0.8 + t) * s * 0.05;
+        let r2 = s * 0.38 + sin(i * 0.8 + t + 1) * s * 0.05;
+        let x1 = cos(sa) * r1, y1 = sin(sa) * r1 - s*0.1;
+        let x2 = cos(sa) * r2, y2 = sin(sa) * r2 - s*0.1;
+        point(x1, y1);
+        point(x2, y2);
+      }
+      noStroke();
+      // 蛇眼
+      fill(200, 50, 50);
+      let headA = t;
+      ellipse(cos(headA) * s * 0.35, sin(headA) * s * 0.35 - s*0.1, s*0.06, s*0.06);
+      noStroke();
+      break;
+    }
+    case 'cursed_dice': {
+      // 诅咒骰子
+      let dicePulse = sin(frameCount * 0.05) * 0.1 + 1;
+      // 顶面
+      fill(150, 80, 180);
+      noStroke();
+      quad(-s*0.25*dicePulse, -s*0.35*dicePulse, s*0.25*dicePulse, -s*0.35*dicePulse,
+           s*0.35*dicePulse, -s*0.25*dicePulse, -s*0.35*dicePulse, -s*0.25*dicePulse);
+      // 正面
+      fill(120, 60, 150);
+      rect(-s*0.25, -s*0.25, s*0.5, s*0.5);
+      // 右侧面
+      fill(90, 50, 120);
+      quad(s*0.25, -s*0.25, s*0.35*dicePulse, -s*0.35*dicePulse,
+           s*0.35*dicePulse, s*0.25*dicePulse, s*0.25, s*0.25);
+      // 点数
+      fill(255, 200, 50);
+      noStroke();
+      ellipse(0, -s*0.1, s*0.06, s*0.06);
+      ellipse(-s*0.12, -s*0.15, s*0.05, s*0.05);
+      ellipse(s*0.12, -s*0.15, s*0.05, s*0.05);
+      ellipse(-s*0.12, s*0.05, s*0.05, s*0.05);
+      ellipse(s*0.12, s*0.05, s*0.05, s*0.05);
+      ellipse(0, s*0.15, s*0.06, s*0.06);
+      noStroke();
+      break;
+    }
+    default: {
+      // 默认：神秘符文
+      fill(50, 50, 70);
+      noStroke();
+      ellipse(0, -s*0.1, s*0.6, s*0.6);
+      fill(200, 180, 100);
+      textAlign(CENTER, CENTER);
+      textSize(s * 0.3);
+      text(relic.icon || '?', 0, -s*0.05);
+      noStroke();
+      break;
+    }
+  }
+  // 稀有度光环（使用RGB直接绘制，避免color()函数开销）
+  let rarityRGB = COLORS_RGB[{ common: 'textDim', uncommon: 'blueBright', rare: 'gold' }[relic.rarity] || 'goldDim'];
+  if (rarityRGB) {
+    noStroke();
+    fill(rarityRGB.r, rarityRGB.g, rarityRGB.b, 100);
+  } else {
+    noStroke();
+    fill(120, 100, 60, 100);
+  }
+  ellipse(0, s * 0.3, s * 1.25, s * 0.4);
+  pop();
+}
+
+// ==================== 牌库查看面板 ====================
+function drawDeckViewer() {
+  // 半透明遮罩
+  fill(0, 200);
+  noStroke();
+  rect(0, 0, GAME_W, GAME_H);
+  // 面板
+  let px = 40, py = 30, pw = GAME_W - 80, ph = GAME_H - 60;
+  noStroke();
+  fill(COLORS.bgLight);
+  rect(px, py, pw, ph, 12);
+  // 面板边框
+  stroke(COLORS.goldDim);
+  strokeWeight(2);
+  noFill();
+  rect(px, py, pw, ph, 12);
+  noStroke();
+  // 标题
+  fill(COLORS.gold);
+  textAlign(CENTER, CENTER);
+  textSize(22);
+  textStyle(BOLD);
+  text('📜 深渊手稿', GAME_W / 2, py + 32);
+
+  // 标签页
+  let tabY = py + 55;
+  let tabH = 28;
+  let deckTabW = 100;
+  let relicTabW = 100;
+  let gap = 8;
+  let totalW = deckTabW + relicTabW + gap;
+  let tabX = px + (pw - totalW) / 2;
+  // 牌库标签
+  let deckActive = gs.viewerTab === 'deck';
+  noStroke();
+  fill(deckActive ? COLORS.gold : COLORS.panel);
+  rect(tabX, tabY, deckTabW, tabH, 6);
+  stroke(deckActive ? COLORS.goldBright : COLORS.panelEdge);
+  strokeWeight(1.5);
+  noFill();
+  rect(tabX, tabY, deckTabW, tabH, 6);
+  noStroke();
+  fill(deckActive ? COLORS.bgLight : COLORS.textDim);
+  textAlign(CENTER, CENTER);
+  textSize(13);
+  textStyle(BOLD);
+  text('📦 牌库', tabX + deckTabW / 2, tabY + tabH / 2);
+  // 遗物标签
+  let relicActive = gs.viewerTab === 'relics';
+  let relicTabX = tabX + deckTabW + gap;
+  noStroke();
+  fill(relicActive ? COLORS.gold : COLORS.panel);
+  rect(relicTabX, tabY, relicTabW, tabH, 6);
+  stroke(relicActive ? COLORS.goldBright : COLORS.panelEdge);
+  strokeWeight(1.5);
+  noFill();
+  rect(relicTabX, tabY, relicTabW, tabH, 6);
+  noStroke();
+  fill(relicActive ? COLORS.bgLight : COLORS.textDim);
+  textAlign(CENTER, CENTER);
+  textSize(13);
+  textStyle(BOLD);
+  let relicCount = gs.relics.length;
+  text(`🏺 遗物 (${relicCount})`, relicTabX + relicTabW / 2, tabY + tabH / 2);
+
+  // 保存标签位置供点击检测
+  gs._viewerTabs = {
+    deck: { x: tabX, y: tabY, w: deckTabW, h: tabH },
+    relics: { x: relicTabX, y: tabY, w: relicTabW, h: tabH }
+  };
+
+  // 关闭提示 - 确保无描边
+  noStroke();
+  fill(COLORS.textDim);
+  textSize(13);
+  textStyle(NORMAL);
+  textAlign(CENTER, CENTER);
+  text('按 Tab 或 ESC 关闭', GAME_W / 2, py + ph - 15);
+  // 关闭按钮
+  let cbx = px + pw - 35, cby = py + 15, cbw = 20, cbh = 20;
+  noStroke();
+  fill(COLORS.red);
+  rect(cbx, cby, cbw, cbh, 4);
+  fill(COLORS.white);
+  textAlign(CENTER, CENTER);
+  textSize(14);
+  textStyle(BOLD);
+  text('×', cbx + cbw / 2, cby + cbh / 2 + 1);
+
+  let contentY = tabY + tabH + 8;
+  let contentH = ph - (contentY - py) - 30;
+
+  if (gs.viewerTab === 'relics') {
+    // ============ 遗物面板 ============
+    if (gs.relics.length === 0) {
+      noStroke();
+      fill(COLORS.textDim);
+      textAlign(CENTER, CENTER);
+      textSize(14);
+      textStyle(NORMAL);
+      text('尚未获得任何遗物', GAME_W / 2, contentY + contentH / 2);
+      textSize(11);
+      text('在探索深渊的过程中，你将发现神秘遗物...', GAME_W / 2, contentY + contentH / 2 + 25);
+    } else {
+      // 遗物网格 - 更大尺寸，更大立绘
+      let cols = 3;
+      let cardGap = 12;
+      let relicW = (pw - 40 - cardGap * (cols - 1)) / cols;
+      let relicH = 200; // 更高的遗物卡片
+      let hoveredRelic = -1;
+      let relicCards = [];
+      gs.relics.forEach((relic, i) => {
+        let col = i % cols;
+        let row = Math.floor(i / cols);
+        let rx = px + 20 + col * (relicW + cardGap);
+        let ry = contentY + row * (relicH + cardGap);
+        if (ry + relicH > contentY + contentH) return;
+        // 检测hover
+        if (mouseX > rx && mouseX < rx + relicW && mouseY > ry && mouseY < ry + relicH) {
+          hoveredRelic = i;
+        }
+        relicCards.push({ relic, rx, ry, col, row, index: i });
+      });
+
+      // 第一遍：绘制所有遗物卡片
+      relicCards.forEach(rc => {
+        drawRelicCard(rc.relic, rc.rx, rc.ry, relicW, relicH, rc.index === hoveredRelic);
+      });
+    }
+  } else {
+    // ============ 牌库面板 ============
+    let isBattle = gs.scene === 'battle' && gs.combatState;
+
+    if (isBattle) {
+      // 战斗中：四个牌堆分区
+      let cs = gs.combatState;
+      let sections = [
+        { title: `🃏 抽牌堆 (${cs.drawPile.length})`, cards: cs.drawPile, c: COLORS.blueBright },
+        { title: `✋ 手牌 (${cs.hand.length})`, cards: cs.hand, c: COLORS.gold },
+        { title: `♻ 弃牌堆 (${cs.discardPile.length})`, cards: cs.discardPile, c: COLORS.textDim },
+        { title: `🔥 消耗堆 (${cs.exhaustPile.length})`, cards: cs.exhaustPile, c: COLORS.red },
+      ];
+      let secH = (contentH - 20) / 4;
+      let cardScale = 0.5;
+      let cardW = CARD_W * cardScale;
+      let cardH = CARD_H * cardScale;
+      for (let s = 0; s < sections.length; s++) {
+        let sec = sections[s];
+        let sy = contentY + s * secH;
+        // 区域背景
+        noStroke();
+        fill(COLORS.panel);
+        rect(px + 15, sy, pw - 30, secH - 8, 6);
+        // 区域边框
+        stroke(COLORS.panelEdge);
+        strokeWeight(1);
+        noFill();
+        rect(px + 15, sy, pw - 30, secH - 8, 6);
+        noStroke();
+        // 区域标题
+        fill(sec.c);
+        textAlign(LEFT, TOP);
+        textSize(13);
+        textStyle(BOLD);
+        text(sec.title, px + 25, sy + 6);
+        // 卡牌列表
+        textStyle(NORMAL);
+        textSize(9);
+        let sx = px + 25, sY = sy + 18;
+        sec.cards.forEach((card) => {
+          if (sx + cardW > px + pw - 20) { sx = px + 25; sY += cardH + 4; }
+          push();
+          translate(sx + cardW / 2, sY + cardH / 2);
+          scale(cardScale);
+          drawCardVisual(card, 0, 0, 1);
+          pop();
+          sx += cardW + 3;
+        });
+      }
+    } else {
+      // 非战斗中：完整牌库
+      let deck = gs.deck;
+      let stats = {};
+      deck.forEach(c => {
+        if (!stats[c.id]) stats[c.id] = { card: c, count: 0 };
+        stats[c.id].count++;
+      });
+      noStroke();
+      fill(COLORS.text);
+      textAlign(LEFT, TOP);
+      textSize(13);
+      textStyle(BOLD);
+      text(`📦 当前牌库 (共 ${deck.length} 张)`, px + 25, contentY);
+      textStyle(NORMAL);
+      textSize(10);
+      text('按类型统计展示，支持随时查阅', px + 25, contentY + 20);
+      // 卡片网格
+      let statY = contentY + 45;
+      let sx2 = px + 25;
+      let cardScale = 0.65;
+      let cardW = CARD_W * cardScale;
+      let cardH = CARD_H * cardScale;
+      Object.values(stats).forEach(s => {
+        let c = s.card;
+        if (sx2 + cardW > px + pw - 20) { sx2 = px + 25; statY += cardH + 8; }
+        if (statY + cardH > contentY + contentH) return;
+        push();
+        translate(sx2 + cardW / 2, statY + cardH / 2);
+        scale(cardScale);
+        drawCardVisual(c, 0, 0, 1);
+        pop();
+        // 数量标记
+        noStroke();
+        fill(COLORS.goldBright);
+        textAlign(CENTER, CENTER);
+        textSize(14);
+        textStyle(BOLD);
+        text(`×${s.count}`, sx2 + cardW - 8, statY + 14);
+        sx2 += cardW + 6;
+      });
+    }
+  }
+}
+
+// 绘制单个遗物卡片（极简安全版）
+function drawRelicCard(relic, rx, ry, rw, rh, isHovered) {
+  push();
+  let rarityName = { common: 'textDim', uncommon: 'blueBright', rare: 'gold' }[relic.rarity] || 'goldDim';
+  // 卡片背景（先画背景，再画边框，最后画内容）
+  noStroke();
+  cFill('panel');
+  rect(rx + 5, ry, rw - 10, rh, 8);
+  // 边框（hover时加粗并变色）
+  cStroke(rarityName);
+  strokeWeight(isHovered ? 3 : 1.5);
+  noFill();
+  rect(rx + 5, ry, rw - 10, rh, 8);
+  noStroke();
+  // hover高亮叠层
+  if (isHovered) {
+    noStroke();
+    cFill(rarityName, 25);
+    rect(rx + 5, ry, rw - 10, rh, 8);
+  }
+  // 遗物立绘
+  let visualSize = 75;
+  drawRelicVisual(relic, rx + rw / 2, ry + 65, visualSize);
+  // 确保文字无描边
+  noStroke();
+  // 名称
+  cFill(rarityName);
+  textAlign(CENTER, TOP);
+  textSize(16);
+  textStyle(BOLD);
+  text(relic.name, rx + rw / 2, ry + 128);
+  // 稀有度标签
+  noStroke();
+  cFill(rarityName);
+  textSize(11);
+  textStyle(NORMAL);
+  let rarityLabel = { common: '普通', uncommon: '罕见', rare: '稀有' }[relic.rarity] || '';
+  text(rarityLabel, rx + rw / 2, ry + 150);
+  // 描述
+  noStroke();
+  cFill('text');
+  textSize(11);
+  textStyle(NORMAL);
+  drawCenteredText(relic.desc || '', rx + rw / 2, ry + 163, rw - 20, rh - 165, 13);
+  pop();
+}
+
+function draw() {
+  // 场景切换检测
+  if (scenes[gs.scene] && scenes[gs.scene] !== currentScene) {
+    currentScene = scenes[gs.scene];
+    currentScene.enter();
+  }
+  // 更新并绘制当前场景
+  if (currentScene) {
+    currentScene.update();
+    currentScene.draw();
+  }
+  // 牌库查看面板覆盖层
+  if (gs.showDeckViewer) {
+    drawDeckViewer();
+  }
+}
+
+function mousePressed() {
+  // 首次点击初始化音频（需要用户交互才能启动AudioContext）
+  if (!audio.initialized) {
+    audio.init();
+  }
+  // 牌库查看面板点击处理
+  if (gs.showDeckViewer) {
+    let panelX = 40, panelY = 30, panelW = GAME_W - 80, panelH = GAME_H - 60;
+    let closeBtn = { x: panelX + panelW - 35, y: panelY + 15, w: 20, h: 20 };
+    // 关闭按钮
+    if (mouseX > closeBtn.x && mouseX < closeBtn.x + closeBtn.w &&
+        mouseY > closeBtn.y && mouseY < closeBtn.y + closeBtn.h) {
+      gs.showDeckViewer = false;
+      return;
+    }
+    // 标签页点击
+    if (gs._viewerTabs) {
+      let tabs = gs._viewerTabs;
+      if (mouseX > tabs.deck.x && mouseX < tabs.deck.x + tabs.deck.w &&
+          mouseY > tabs.deck.y && mouseY < tabs.deck.y + tabs.deck.h) {
+        gs.viewerTab = 'deck';
+        return;
+      }
+      if (mouseX > tabs.relics.x && mouseX < tabs.relics.x + tabs.relics.w &&
+          mouseY > tabs.relics.y && mouseY < tabs.relics.y + tabs.relics.h) {
+        gs.viewerTab = 'relics';
+        return;
+      }
+    }
+    // 点击面板外关闭
+    if (mouseX < panelX || mouseX > panelX + panelW ||
+        mouseY < panelY || mouseY > panelY + panelH) {
+      gs.showDeckViewer = false;
+      return;
+    }
+    return;
+  }
+  if (currentScene) currentScene.mousePressed();
+}
+
+function keyPressed() {
+  // Tab键切换牌库查看
+  if (keyCode === 9 || key === 'Tab') {
+    gs.showDeckViewer = !gs.showDeckViewer;
+    return false;
+  }
+  // ESC关闭牌库
+  if (keyCode === ESCAPE) {
+    if (gs.showDeckViewer) {
+      gs.showDeckViewer = false;
+      return;
+    }
+  }
+  if (currentScene) currentScene.keyPressed();
+}
+
+// 窗口大小调整：禁用自动缩放，保持固定画布尺寸
+function windowResized() {
+  // 保持画布固定大小，避免坐标系统混乱
+  resizeCanvas(GAME_W, GAME_H);
+}
+</script>
+</body>
+</html>

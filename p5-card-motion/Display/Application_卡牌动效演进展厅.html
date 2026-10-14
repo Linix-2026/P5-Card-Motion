@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>卡牌动效演进展厅 · V1.3 → V2.0 → V2.1</title>
+<!-- p5.js 国内镜像（与正式工程同版本 1.11.0） -->
+<script src="https://cdn.jsdmirror.com/npm/p5@1.11.0/lib/p5.min.js"></script>
+<style>
+  :root{
+    --bg:#0a0a10; --bg2:#12121f; --panel:#16162a; --edge:#2a1a3a;
+    --gold:#c9a84c; --gold-dim:#7a6530; --gold-bright:#f0d060;
+    --text:#c8c0b8; --dim:#706860; --silver:#c6ccd8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{background:var(--bg);}
+  body{
+    color:var(--text);
+    font-family:"Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+    background:
+      radial-gradient(1200px 600px at 50% -10%, rgba(90,42,122,.22), transparent 60%),
+      radial-gradient(900px 500px at 50% 110%, rgba(48,64,160,.14), transparent 60%),
+      var(--bg);
+    min-height:100vh; padding:38px 24px 60px;
+  }
+  /* ===== 页头 ===== */
+  header{text-align:center;max-width:1100px;margin:0 auto 26px;}
+  h1{
+    font-family:"Noto Serif SC","Songti SC","STSong",serif;
+    font-size:30px;letter-spacing:6px;color:var(--gold-bright);
+    text-shadow:0 0 24px rgba(201,168,76,.25);font-weight:700;
+  }
+  h1 .sub{display:block;font-size:13px;letter-spacing:3px;color:var(--dim);
+    font-family:inherit;margin-top:10px;font-weight:400;}
+  .hint{
+    display:inline-block;margin-top:16px;padding:7px 18px;border-radius:999px;
+    border:1px solid rgba(201,168,76,.35);color:var(--silver);font-size:13px;
+    background:rgba(201,168,76,.06);
+  }
+  /* ===== 三栏舞台 ===== */
+  .stage{
+    display:flex;justify-content:center;align-items:stretch;gap:0;
+    flex-wrap:wrap;max-width:1360px;margin:0 auto;
+  }
+  .panel{width:400px;padding:0 6px;}
+  .panel-head{border:1px solid var(--edge);border-bottom:none;border-radius:14px 14px 0 0;
+    background:linear-gradient(180deg,rgba(22,22,42,.95),rgba(18,18,31,.9));
+    padding:14px 16px 12px;}
+  .badge{display:inline-block;font-size:11px;letter-spacing:2px;padding:3px 10px;border-radius:4px;
+    border:1px solid var(--gold-dim);color:var(--gold);margin-bottom:8px;}
+  .badge.virtual{border-color:#5a2a7a;color:#c060ff;}
+  .badge.final{border-color:var(--gold);color:var(--gold-bright);
+    box-shadow:0 0 14px rgba(201,168,76,.18) inset;}
+  .panel-head h2{font-size:18px;color:var(--silver);letter-spacing:2px;font-weight:700;}
+  .panel-head .era{font-size:12px;color:var(--dim);margin-top:4px;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+  .chip{font-size:11px;line-height:1;padding:5px 8px;border-radius:4px;
+    background:rgba(198,204,216,.07);color:var(--text);border:1px solid rgba(198,204,216,.14);}
+  .chip.hot{color:var(--gold-bright);border-color:rgba(201,168,76,.35);background:rgba(201,168,76,.08);}
+  .canvas-wrap{
+    width:400px;height:370px;overflow:hidden;border:1px solid var(--edge);
+    background:#0a0a10;position:relative;
+    box-shadow:0 0 0 1px rgba(201,168,76,.14), 0 18px 50px rgba(0,0,0,.55),
+      inset 0 0 80px rgba(0,0,0,.55);
+  }
+  .canvas-wrap canvas{display:block;}
+  .panel-foot{border:1px solid var(--edge);border-top:none;border-radius:0 0 14px 14px;
+    background:rgba(18,18,31,.85);padding:12px 16px 14px;min-height:132px;}
+  .panel-foot ul{list-style:none;}
+  .panel-foot li{font-size:12px;color:var(--dim);line-height:1.75;padding-left:14px;position:relative;}
+  .panel-foot li::before{content:"·";position:absolute;left:3px;color:var(--gold);}
+  .panel-foot li b{color:var(--text);font-weight:600;}
+  /* 演进箭头 */
+  .arrow{display:flex;align-items:center;justify-content:center;width:38px;align-self:center;}
+  .arrow span{
+    font-size:26px;color:var(--gold);opacity:.75;
+    text-shadow:0 0 14px rgba(201,168,76,.6);
+    animation:arrowPulse 2.2s ease-in-out infinite;
+  }
+  @keyframes arrowPulse{0%,100%{transform:translateX(0);opacity:.55}50%{transform:translateX(5px);opacity:1}}
+  /* ===== 特性矩阵 ===== */
+  .matrix{max-width:1100px;margin:42px auto 0;border:1px solid var(--edge);border-radius:14px;
+    overflow:hidden;background:rgba(18,18,31,.7);}
+  .matrix h3{font-size:16px;letter-spacing:3px;color:var(--gold-bright);text-align:center;
+    padding:16px 0 12px;font-weight:700;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{padding:9px 12px;text-align:center;border-top:1px solid rgba(198,204,216,.1);}
+  th:first-child,td:first-child{text-align:left;color:var(--text);}
+  thead th{background:rgba(201,168,76,.09);color:var(--silver);font-weight:600;letter-spacing:1px;}
+  td .y{color:#60d080;} td .p{color:#e0a040;} td .n{color:#55504c;}
+  .guide{max-width:1100px;margin:26px auto 0;padding:16px 22px;
+    border:1px solid var(--edge);border-radius:14px;background:rgba(22,22,42,.55);}
+  .guide h3{font-size:14px;color:var(--gold);letter-spacing:2px;margin-bottom:10px;}
+  .guide ol{padding-left:20px;}
+  .guide li{font-size:13px;line-height:2;color:var(--text);}
+  .guide li b{color:var(--gold-bright);}
+  footer{max-width:1100px;margin:30px auto 0;text-align:center;font-size:12px;
+    color:var(--dim);line-height:2;}
+  footer code{color:var(--silver);background:rgba(198,204,216,.08);
+    padding:1px 6px;border-radius:4px;font-size:11px;}
+  @media (max-width:1359px){ .arrow{display:none;} .panel{margin-bottom:26px;} }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>卡牌动效演进展厅
+    <span class="sub">V1.3 初版 · 直线瞬变　→　V2.0 过渡版 · 阻尼弧面（虚拟设计）　→　V2.1 最终版 · 刚体 3D × 全息镭射</span>
+  </h1>
+  <div class="hint">将鼠标移入任一画框，悬停 / 滑离卡牌 —— 三栏为彼此独立的 p5 实例，可同时对比手感</div>
+</header>
+
+<main class="stage">
+
+  <!-- ============ V1.3 初版 ============ -->
+  <section class="panel">
+    <div class="panel-head">
+      <span class="badge">V1.3 · 开发初期版</span>
+      <h2>直线平铺 · 瞬变悬停</h2>
+      <div class="era">验证交互骨架：悬停置顶 + 可打金框</div>
+      <div class="chips">
+        <span class="chip">直线等距排列</span>
+        <span class="chip hot">scale(1.12) 瞬变</span>
+        <span class="chip">上提 25px</span>
+        <span class="chip">单层 baked 暗影</span>
+        <span class="chip">无镭射</span>
+      </div>
+    </div>
+    <div class="canvas-wrap" id="panel-v13"></div>
+    <div class="panel-foot"><ul>
+      <li>悬停<b>无任何过渡</b>：移入即放大、移出即归位。</li>
+      <li>命中框 = <b>CARD_W/H × 1.12</b> 的 AABB，每帧自右向左实时重算。</li>
+      <li>卡面用 <code style="color:var(--silver)">color(hex)</code> 每帧解析颜色（V2.1 改查表）。</li>
+      <li>两遍绘制（非悬停 → 悬停置顶）与<b>可打金框</b>自此定型。</li>
+    </ul></div>
+  </section>
+
+  <div class="arrow"><span>⟶</span></div>
+
+  <!-- ============ V2.0 虚拟过渡版 ============ -->
+  <section class="panel">
+    <div class="panel-head">
+      <span class="badge virtual">V2.0 · 过渡版（未接入社区成熟技术实现参考）</span>
+      <h2>弧面持握 · 阻尼初醒</h2>
+      <div class="era">引入帧率无关阻尼内核与扇形布局</div>
+      <div class="chips">
+        <span class="chip hot">弧面排列</span>
+        <span class="chip hot">dampApproach 阻尼</span>
+        <span class="chip">1.15 · 上提 40px</span>
+        <span class="chip">静态随机微旋转</span>
+        <span class="chip">单层矩形阴影</span>
+        <span class="chip hot">多色粗斜线覆膜</span>
+      </div>
+    </div>
+    <div class="canvas-wrap" id="panel-v20"></div>
+    <div class="panel-foot"><ul>
+      <li>进出<b>同用 easeOutCubic</b>：有惯性了，但退出偏「急」偏「黏」。</li>
+      <li>微旋转为发牌时掷一次的<b>静态倾角</b>，尚无 sin 呼吸漂移。</li>
+      <li>镭射 = <b>自漂移多色粗斜线</b>凑出的光带：无像素光栅、不跟鼠标、无噪点 / 虹彩边。</li>
+      <li>无 3D 倾斜与受光高光（那是 V2.1 的重武器）。</li>
+    </ul></div>
+  </section>
+
+  <div class="arrow"><span>⟶</span></div>
+
+  <!-- ============ V2.1 最终版 ============ -->
+  <section class="panel">
+    <div class="panel-head">
+      <span class="badge final">V2.1 · 最终成熟版</span>
+      <h2>刚体 3D · 全息镭射</h2>
+      <div class="era">非对称缓动 × 正交投影 × 鼠标驱动材质</div>
+      <div class="chips">
+        <span class="chip hot">非对称缓动 1.18 · 50px</span>
+        <span class="chip hot">sin 漂移微旋转</span>
+        <span class="chip">四层高度感知阴影</span>
+        <span class="chip hot">伪 3D 倾斜 + 受光高光</span>
+        <span class="chip hot">鼠标驱动全息覆膜</span>
+      </div>
+    </div>
+    <div class="canvas-wrap" id="panel-v21"></div>
+    <div class="panel-foot"><ul>
+      <li>进入 <b>easeOutCubic</b>（跟手）/ 退出 <b>easeInCubic</b>（像被指尖放走）。</li>
+      <li>鼠标位置 → <b>≤18° 刚体正交投影</b>，阴影朝倾斜反方向逃。</li>
+      <li>镭射四层：对角光带 + 像素光栅 + 虹彩描边 + Perlin 噪点（200 块硬顶）。</li>
+      <li>悬停卡二遍绘制置顶；NaN 钳制 / ADD 必复位等生产防御齐备。</li>
+    </ul></div>
+  </section>
+</main>
+
+<!-- ===== 特性矩阵 ===== -->
+<section class="matrix">
+  <h3>三代特性矩阵</h3>
+  <table>
+    <thead><tr><th>特性维度</th><th>V1.3 初版</th><th>V2.0 过渡版</th><th>V2.1 最终版</th></tr></thead>
+    <tbody>
+      <tr><td>手牌排列</td><td><span class="n">直线平铺</span></td><td><span class="p">弧面排列</span></td><td><span class="y">弧面（曲率随牌数自适应）</span></td></tr>
+      <tr><td>悬停缩放</td><td><span class="n">瞬变 1.12</span></td><td><span class="p">阻尼 1 → 1.15</span></td><td><span class="y">阻尼 1 → 1.18（非对称缓动）</span></td></tr>
+      <tr><td>悬停抽出</td><td><span class="n">瞬变 −25px</span></td><td><span class="p">阻尼 −40px</span></td><td><span class="y">阻尼 −50px</span></td></tr>
+      <tr><td>随机微旋转</td><td><span class="n">无</span></td><td><span class="p">静态 ±3°</span></td><td><span class="y">静态 ±3° + sin 漂移</span></td></tr>
+      <tr><td>动态阴影</td><td><span class="n">卡面内 baked 单层</span></td><td><span class="p">单层矩形</span></td><td><span class="y">3 柔影 + 1 硬影（高度感知）</span></td></tr>
+      <tr><td>伪 3D 透视倾斜</td><td><span class="n">无</span></td><td><span class="n">无</span></td><td><span class="y">正交投影矩阵（≤18°）+ 方向阴影</span></td></tr>
+      <tr><td>3D 受光高光</td><td><span class="n">无</span></td><td><span class="n">无</span></td><td><span class="y">渐变 sheen（顶部受光 / 底部压暗）</span></td></tr>
+      <tr><td>镭射覆膜</td><td><span class="n">无</span></td><td><span class="p">自漂移多色粗斜线</span></td><td><span class="y">鼠标驱动全息折射（四层）</span></td></tr>
+      <tr><td>缓动内核</td><td><span class="n">无（瞬变）</span></td><td><span class="p">dampApproach 单速</span></td><td><span class="y">dampApproach + 非对称缓动</span></td></tr>
+      <tr><td>性能 / 健壮性防御</td><td><span class="n">无</span></td><td><span class="n">无</span></td><td><span class="y">NaN 钳制 · 像素块上限 · RGB 预转换</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ===== 观察指南 ===== -->
+<section class="guide">
+  <h3>◈ 手感观察指南</h3>
+  <ol>
+    <li><b>快速划入再划出</b>中间的紫色稀有卡「深渊咒印」：V1.3 原地瞬跳；V2.0 有惯性但退出发「急」；V2.1 退出时先迟疑半拍再滑落 —— 那是 easeInCubic 的「放走」感。</li>
+    <li><b>在 V2.1 悬停卡上缓慢移动鼠标</b>：卡面像水晶棱镜一样刚体倾侧（文字随矩阵变形），影子朝反方向逃，镭射光带沿对角线追随指尖。</li>
+    <li><b>不悬停时横向对比</b>：V2.0 / V2.1 的扇形弧面 vs V1.3 的直线；V2.1 每张牌还有错拍的 sin 呼吸漂移，V2.0 的倾角是「凝固」的。</li>
+    <li><b>看紫色卡的覆膜</b>：V1.3 只有静态卡面；V2.0 是三根自行漂移、各自变色的粗斜线（未参考成熟方案的朴素直觉）；V2.1 是调研网络成熟实现后重做的光栅衍射 + 虹彩描边 + Perlin 磨砂噪点全息膜，悬停时光带追随鼠标、亮度 +30%、色相 2 倍速。</li>
+  </ol>
+</section>
+
+<footer>
+  代码溯源：V1.3 = <code>index - 1.3.html</code> drawHand L2442 / drawCardVisual L3483（真实代码原样移植）；
+  V2.1 = <code>index211(1.x).html</code> drawHand L12095 / drawCardLaser L11942 / 3D 三件套 L16911 / drawCardVisual L16960（真实代码原样移植）；
+  V2.0 为虚拟过渡版，设计推导见 <code>08-卡牌动效技术解析.md</code> 第三节。<br>
+  三栏均为 p5.js <b>实例模式</b>独立实例（状态字典互不干扰），卡牌 140×200、每栏 3 张；运行库 p5@1.11.0（cdn.jsdmirror.com 国内镜像）。
+</footer>
+
+<script>
+// ============================================================
+// 卡牌动效演进展厅 · 三版本并排
+// 架构：三个 p5 实例模式 sketch 闭包，各自持有独立的状态字典 / 命中检测 / 布局原点。
+// 闭包内将 p5 方法 bind 为短名别名，使两个正式版本的成熟代码可以近乎逐行原样移植。
+// ============================================================
+
+// -------------------- 公共常量（源码 L35-95 最小子集） --------------------
+const CARD_W = 140, CARD_H = 200;
+const COLORS = {
+  bg:'#0a0a10', panel:'#16162a', panelEdge:'#2a1a3a',
+  gold:'#c9a84c', goldDim:'#7a6530', goldBright:'#f0d060',
+  red:'#8b2020', combo:'#ff6020', greenBright:'#40a040', purple:'#5a2a7a',
+  text:'#c8c0b8', textDim:'#706860',
+};
+function hexToRgb(hex){
+  let h = hex.replace('#','');
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  return { r:parseInt(h.substring(0,2),16), g:parseInt(h.substring(2,4),16), b:parseInt(h.substring(4,6),16) };
+}
+const COLORS_RGB = {};
+for (let [k,v] of Object.entries(COLORS)) COLORS_RGB[k] = hexToRgb(v);
+
+// -------------------- 纯数学工具（源码 L3613-3631，逐行原样） --------------------
+function rand(min, max){ return Math.random() * (max - min) + min; }
+function lerp(a, b, t){ return a + (b - a) * t; }
+function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
+function easeInCubic(t){ return t * t * t; }
+// 帧率无关阻尼：k 为 60fps 基准逼近比例（硬约束 #15：k∈0.1–0.3）
+function dampApproach(current, target, k, dt){
+  let factor = 1 - Math.pow(1 - k, dt * 60 / 1000);
+  return current + (target - current) * factor;
+}
+
+// -------------------- 展厅桩：正式代码引用 gs / getEffectiveStatusAmt，此处给安全空实现 --------------------
+const gs = { combatState:null, hasRelic:()=>false };
+function getEffectiveStatusAmt(/*card*/){ return 0; }
+
+// -------------------- 三栏共用的同一手牌（各栏深拷贝，互不影响） --------------------
+// 第 3 张 upgraded=true → isSpecialCard 命中 → V2.0/V2.1 展示镭射覆膜
+const HAND_DEFS = [
+  { uid:101, id:'strike',  name:'裂骨斩',   type:'attack', cost:1, color:'#d04040',
+    desc:'造成 {dmg} 点伤害。', baseDmg:6, keywords:['猛击'] },
+  { uid:102, id:'defend',  name:'铁壁御',   type:'skill',  cost:1, color:'#6080e0',
+    desc:'获得 {block} 点格挡。', baseBlock:5, keywords:[] },
+  { uid:103, id:'sigil',   name:'深渊咒印', type:'power',  cost:2, color:'#9060c0',
+    upgraded:true, keywords:['流转'], desc:'每回合开始时获得 2 点能量。' },
+];
+
+// 展厅画布尺寸与布局原点（正式工程为 1280×720、baseY=GAME_H*0.78，此处等比映射到小画框）
+const PW = 400, PH = 370, BASE_Y = 242;
+
+// ============================================================
+// Sketch 工厂：version ∈ 13 | 20 | 21
+// ============================================================
+function createHandSketch(version){
+  return (p) => {
+    // ---- p5 实例方法别名（bind 固定 this），让成熟源码去除 p. 前缀后原样运行 ----
+    const [
+      push, pop, fill, stroke, noFill, noStroke, rect, ellipse, line, arc,
+      beginShape, endShape, vertex, text, textSize, textAlign, textStyle, textWidth,
+      translate, rotate, scale, applyMatrix, blendMode, colorMode, noise,
+      background, strokeWeight, color, red, green, blue
+    ] = [
+      'push','pop','fill','stroke','noFill','noStroke','rect','ellipse','line','arc',
+      'beginShape','endShape','vertex','text','textSize','textAlign','textStyle','textWidth',
+      'translate','rotate','scale','applyMatrix','blendMode','colorMode','noise',
+      'background','strokeWeight','color','red','green','blue'
+    ].map(n => p[n].bind(p));
+    // ---- p5 常量快照 ----
+    const PI = p.PI, HSB = p.HSB, RGB = p.RGB, ADD = p.ADD, BLEND = p.BLEND,
+          CENTER = p.CENTER, TOP = p.TOP, BOLD = p.BOLD, NORMAL = p.NORMAL, CLOSE = p.CLOSE;
+    // ---- 帧变量（每帧从 p 实例同步，模拟全局模式下的同名变量） ----
+    let frameCount = 0, deltaTime = 16.67, mouseX = PW/2, mouseY = PH/2, drawingContext = null;
+
+    // ---- 每栏独立的手牌副本与动画状态字典（M2 双轨身份键的简化形态） ----
+    const cards = HAND_DEFS.map(c => ({ ...c }));
+    const states = {};
+    let hoveredCard = null;
+    let pointerInside = false; // 指针是否位于本栏画框内（离开即清空悬停，禁止隔空命中）
+
+    p.setup = () => {
+      p.createCanvas(PW, PH);
+      p.pixelDensity(Math.min(2, window.devicePixelRatio || 1));
+      p.frameRate(60);
+      p.textFont('"Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif');
+      // 不同 noiseSeed：三栏覆膜纹理不完全同步
+      p.noiseSeed(version === 21 ? 21071 : version === 20 ? 20173 : 13037);
+    };
+
+    // ==================== 公共小函数 ====================
+    // 安全颜色封装（硬约束 #4：禁 fill('#hex') 直书）
+    function cFill(name, alpha){
+      const c = COLORS_RGB[name];
+      if (alpha !== undefined) fill(c.r, c.g, c.b, alpha); else fill(c.r, c.g, c.b);
+    }
+    function cStroke(name, alpha){
+      const c = COLORS_RGB[name];
+      if (alpha !== undefined) stroke(c.r, c.g, c.b, alpha); else stroke(c.r, c.g, c.b);
+    }
+    // 居中自动换行（源码 V1.3 L549-586 / V2.1 L3634 同款，逐行原样）
+    function drawCenteredText(str, centerX, y, maxW, maxH, lineHeight){
+      textAlign(CENTER, TOP);
+      lineHeight = lineHeight || 12;
+      let chars = (str || '').split('');
+      let lines = [];
+      let currentLine = '';
+      let currentW = 0;
+      for (let i = 0; i < chars.length; i++){
+        let ch = chars[i];
+        let chW = textWidth(ch);
+        if (currentW + chW > maxW && currentLine.length > 0){
+          lines.push(currentLine);
+          currentLine = ch;
+          currentW = chW;
+        } else {
+          currentLine += ch;
+          currentW += chW;
+        }
+      }
+      if (currentLine) lines.push(currentLine);
+      let maxLines = Math.floor(maxH / lineHeight);
+      if (lines.length > maxLines){
+        lines = lines.slice(0, maxLines);
+        let lastLine = lines[maxLines - 1];
+        while (lastLine.length > 0 && textWidth(lastLine + '…') > maxW){
+          lastLine = lastLine.slice(0, -1);
+        }
+        lastLine = lastLine + '…';
+        lines[maxLines - 1] = lastLine;
+      }
+      for (let i = 0; i < lines.length; i++) text(lines[i], centerX, y + i * lineHeight);
+    }
+    // 展厅内全部卡均可打出（悬停展示金框）
+    function canPlayCard(/*card*/){ return true; }
+    // 镭射资格判定（源码 L11900-11907，原样）
+    function isSpecialCard(card){
+      if (!card) return false;
+      if (card.upgraded) return true;
+      if (card.keywords && card.keywords.some(k => ['先攻','流转','震慑','异常'].includes(k))) return true;
+      if (card.rarity === 'rare') return true;
+      return false;
+    }
+    // 动画状态（M2）。V2.0 不消费 microRotPhase，故按版本建字段（硬约束 #17：字段必须被引用）
+    function getState(card){
+      const key = card.id + '_n' + card.uid;
+      if (!states[key]){
+        states[key] = {
+          offsetY:0, scale:1, rotation:0, hoverProgress:0,
+          microRot: rand(-3, 3) * Math.PI / 180,
+          microRotPhase: version === 21 ? rand(0, Math.PI * 2) : 0,
+        };
+      }
+      return states[key];
+    }
+
+    // ==================== M3 弧面布局（源码 L12100-12130，原点映射到展厅） ====================
+    function handLayout(i){
+      const n = cards.length;
+      const spacing = n > 6 ? Math.min(95, 580 / n) : 110; // 3 张 → 110
+      const startX = PW * 0.5 - (n - 1) * spacing / 2;
+      const arcHeight = clamp(40 - n * 3, 10, 40);          // 3 张 → 31px
+      const centerOffset = (i - (n - 1) / 2) / Math.max(1, (n - 1) / 2);
+      const arcY = BASE_Y - arcHeight * (1 - centerOffset * centerOffset);
+      const arcRot = centerOffset * (n > 4 ? 0.12 : 0.18);  // 两端向内倒
+      return { cx:startX + i * spacing, cy:arcY, arcRot, centerOffset };
+    }
+    // V1.3 直线布局（源码 L2448-2449/2457，cy 恒为基线）
+    function flatLayout(i){
+      const n = cards.length;
+      const spacing = n > 6 ? Math.min(95, 580 / n) : 110;
+      const startX = PW * 0.5 - (n - 1) * spacing / 2;
+      return { cx:startX + i * spacing, cy:BASE_Y };
+    }
+    // 悬停命中检测（硬约束 #16：每帧实时重算；自右向左，优先上层卡）
+    function recalcHover(useArc){
+      hoveredCard = null;
+      if (!pointerInside) return; // 指针不在本栏：保持无悬停，阻尼管线负责把牌送回弧面
+      for (let i = cards.length - 1; i >= 0; i--){
+        const L = useArc ? handLayout(i) : flatLayout(i);
+        const hoverW = CARD_W * 1.12, hoverH = CARD_H * 1.12; // 与正式工程一致的 1.12 放大判定框
+        if (mouseX > L.cx - hoverW/2 && mouseX < L.cx + hoverW/2 &&
+            mouseY > L.cy - hoverH/2 && mouseY < L.cy + hoverH/2){
+          hoveredCard = cards[i];
+          break;
+        }
+      }
+    }
+
+    // ============================================================
+    // 卡面本体 A：V1.3 初版（源码 L3483-3579 逐行移植，保留 color() 解析旧写法）
+    // ============================================================
+    function drawCardVisualV13(card, cx, cy, cardScale){
+      push();
+      translate(cx, cy);
+      scale(cardScale || 1);
+      let c = card.cost;
+      let cs = gs.combatState;
+      if (cs && card.keywords && card.keywords.includes('先攻') && cs.cardsPlayedThisTurn && cs.cardsPlayedThisTurn.length === 0) c = Math.max(0, c - 1);
+      if (gs.hasRelic && gs.hasRelic('first_strike_charm') && cs && cs.cardsPlayedThisTurn && cs.cardsPlayedThisTurn.length === 0) c = Math.max(0, c - 1);
+      // 阴影（单层，烤在卡面绘制里）
+      fill(0, 60);
+      noStroke();
+      rect(-CARD_W / 2 + 3, -CARD_H / 2 + 3, CARD_W, CARD_H, 10);
+      // 卡牌主体（V1.3：每帧 color() 解析 hex + red/green/blue 三次取值）
+      let cardColor = card.color || COLORS.gold;
+      let bgC = color(cardColor);
+      fill(red(bgC) * 0.15, green(bgC) * 0.15, blue(bgC) * 0.15);
+      stroke(cardColor);
+      strokeWeight(1.5);
+      rect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 10);
+      // 内边框
+      stroke(cardColor);
+      strokeWeight(0.5);
+      noFill();
+      rect(-CARD_W / 2 + 6, -CARD_H / 2 + 6, CARD_W - 12, CARD_H - 12, 6);
+      // 装饰角
+      fill(cardColor);
+      noStroke();
+      let cornerSize = 8;
+      [-1, 1].forEach(sx => {
+        [-1, 1].forEach(sy => {
+          ellipse(sx * (CARD_W / 2 - 10), sy * (CARD_H / 2 - 10), cornerSize, cornerSize);
+        });
+      });
+      // 费用
+      fill(cardColor);
+      noStroke();
+      ellipse(-CARD_W / 2 + 20, -CARD_H / 2 + 20, 26, 26);
+      fill(0);
+      textAlign(CENTER, CENTER);
+      textSize(16);
+      textStyle(BOLD);
+      text(c, -CARD_W / 2 + 20, -CARD_H / 2 + 20);
+      // 升级标记
+      if (card.upgraded){
+        fill(COLORS.goldBright);
+        textSize(10);
+        text('+', -CARD_W / 2 + 20, -CARD_H / 2 + 40);
+      }
+      // 卡牌名称
+      fill(cardColor);
+      textSize(12);
+      textStyle(BOLD);
+      let nameMaxW = CARD_W - 20;
+      let nameH = 16;
+      drawCenteredText(card.name, 0, -CARD_H / 2 + 28, nameMaxW, nameH, 14);
+      // 类型
+      fill(cardColor);
+      textSize(9);
+      let typeText = card.type === 'attack' ? '攻击' : (card.type === 'skill' ? '技能' : '能力');
+      textAlign(CENTER, TOP);
+      text(typeText, 0, -CARD_H / 2 + 28 + nameH + 2);
+      // 分隔线
+      stroke(cardColor);
+      strokeWeight(0.5);
+      let sepY = -CARD_H / 2 + 28 + nameH + 18;
+      line(-CARD_W / 2 + 15, sepY, CARD_W / 2 - 15, sepY);
+      // 描述
+      let desc = (card.desc || '').replace('{dmg}', card.baseDmg || 0).replace('{block}', card.baseBlock || 0);
+      if (card.comboBonus) desc = desc.replace('{combo_bonus}', card.comboBonus);
+      if (card.comboBlock) desc = desc.replace('{combo_block}', card.comboBlock);
+      if (card.comboScale) desc = desc.replace('{combo_scale}', card.comboScale);
+      if (card.statusAmt) desc = desc.replace('{burn}', card.statusAmt).replace('{freeze}', card.statusAmt).replace('{corrode}', card.statusAmt).replace('{poison}', card.statusAmt);
+      fill(COLORS.text);
+      textSize(9);
+      textStyle(NORMAL);
+      let hasKw = card.keywords && card.keywords.length > 0;
+      let descMaxH = hasKw ? (CARD_H / 2 - 30) - (sepY + 8) : (CARD_H / 2 - 12) - (sepY + 8);
+      descMaxH = Math.max(20, descMaxH);
+      drawCenteredText(desc, 0, sepY + 8, CARD_W - 20, descMaxH, 11);
+      // 特性标签（V1.3：关键词各自固定配色）
+      if (hasKw){
+        let ky = CARD_H / 2 - 30;
+        card.keywords.forEach(kw => {
+          let kwColor = { '先攻':COLORS.gold, '连击':COLORS.combo, '猛击':COLORS.red,
+            '震慑':COLORS.purple, '异常':COLORS.greenBright, '流转':COLORS.greenBright }[kw] || COLORS.textDim;
+          fill(kwColor);
+          textSize(8);
+          textStyle(BOLD);
+          text(kw, 0, ky);
+          ky += 12;
+        });
+      }
+      // 伪3D光泽：顶部 35% 极淡白膜（alpha 8）——V1.3 就存在的「覆膜反光」雏形
+      fill(255, 8);
+      noStroke();
+      rect(-CARD_W / 2 + 8, -CARD_H / 2 + 8, CARD_W - 16, CARD_H * 0.35, 6);
+      pop();
+    }
+
+    // ============================================================
+    // 卡面本体 B：V2.1 现代版（源码 L16960-16996 逐行移植：RGB 预转换 + 类型图案 + try/finally）
+    // V2.0 过渡版共用此卡面 —— 演进对比聚焦于「运动手感 + 镭射材质」，卡面美术翻新在 V2.0 已完成。
+    // ============================================================
+    function drawCardVisualModern(card, cx, cy, cardScale){
+      push();
+      try {
+        translate(cx, cy);
+        scale(cardScale || 1);
+        let c = (card && card.cost != null) ? card.cost : 0;
+        let cs = gs.combatState;
+        if (cs && card.keywords && card.keywords.includes('先攻') && cs.cardsPlayedThisTurn && cs.cardsPlayedThisTurn.length === 0) c = Math.max(0, c - 1);
+        if (gs.hasRelic && gs.hasRelic('first_strike_charm') && cs && cs.cardsPlayedThisTurn && cs.cardsPlayedThisTurn.length === 0) c = Math.max(0, c - 1);
+        if (card._discountCost) c = Math.max(0, c - card._discountCost);
+        // 阴影
+        fill(0, 60);
+        noStroke();
+        rect(-CARD_W / 2 + 3, -CARD_H / 2 + 3, CARD_W, CARD_H, 10);
+        // 卡牌主体：hex 预先转 RGB 三元组，避免每帧 p5 字符串解析（源码注释 L16977）
+        let cardColor = card.color || COLORS.gold;
+        let cr = (typeof cardColor === 'string' && cardColor.startsWith('#'))
+          ? hexToRgb(cardColor) : (COLORS_RGB[cardColor] || COLORS_RGB.gold);
+        fill(Math.floor(cr.r * 0.15), Math.floor(cr.g * 0.15), Math.floor(cr.b * 0.15));
+        stroke(cr.r, cr.g, cr.b);
+        strokeWeight(1.5);
+        rect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 10);
+        // 内边框
+        stroke(cr.r, cr.g, cr.b);
+        strokeWeight(0.5);
+        noFill();
+        rect(-CARD_W / 2 + 6, -CARD_H / 2 + 6, CARD_W - 12, CARD_H - 12, 6);
+        // 类型图案（全程序化，零贴图资产）
+        push();
+        noStroke();
+        let artY = 10, artR = 25;
+        if (card.type === 'attack'){
+          // 交叉刀刃
+          stroke(cr.r, cr.g, cr.b, 60); strokeWeight(1.5); noFill();
+          line(-artR, artY - artR, artR, artY + artR);
+          line(artR, artY - artR, -artR, artY + artR);
+          noStroke();
+          fill(Math.floor(cr.r * 0.3), Math.floor(cr.g * 0.3), Math.floor(cr.b * 0.3));
+          ellipse(0, artY, 8, 8);
+          fill(cr.r, cr.g, cr.b, 100);
+          ellipse(0, artY, 4, 4);
+        } else if (card.type === 'skill'){
+          // 符文圆环 + 6 符文点
+          noFill(); stroke(cr.r, cr.g, cr.b, 60); strokeWeight(1.5);
+          ellipse(0, artY, artR * 2, artR * 2);
+          ellipse(0, artY, artR * 1.4, artR * 1.4);
+          noStroke(); fill(cr.r, cr.g, cr.b, 80);
+          for (let i = 0; i < 6; i++){
+            let a = (i / 6) * Math.PI * 2;
+            ellipse(Math.cos(a) * artR, artY + Math.sin(a) * artR, 2.5, 2.5);
+          }
+          noStroke();
+          fill(Math.floor(cr.r * 0.3), Math.floor(cr.g * 0.3), Math.floor(cr.b * 0.3));
+          ellipse(0, artY, 8, 8);
+          fill(cr.r, cr.g, cr.b, 100);
+          ellipse(0, artY, 4, 4);
+        } else if (card.type === 'power'){
+          // 双三角六芒星
+          noFill(); stroke(cr.r, cr.g, cr.b, 60); strokeWeight(1.5);
+          for (let i = 0; i < 2; i++){
+            beginShape();
+            for (let j = 0; j < 3; j++){
+              let a = (j / 3) * Math.PI * 2 + (i ? Math.PI : 0);
+              vertex(Math.cos(a) * artR, artY + Math.sin(a) * artR);
+            }
+            endShape(CLOSE);
+          }
+          // 内六边
+          noStroke(); fill(cr.r, cr.g, cr.b, 30);
+          beginShape();
+          for (let j = 0; j < 6; j++){
+            let a = (j / 6) * Math.PI * 2;
+            vertex(Math.cos(a) * artR * 0.5, artY + Math.sin(a) * artR * 0.5);
+          }
+          endShape(CLOSE);
+          // 6 顶点宝石
+          noStroke(); fill(cr.r, cr.g, cr.b, 140);
+          for (let i = 0; i < 6; i++){
+            let a = (i / 6) * Math.PI * 2;
+            ellipse(Math.cos(a) * artR, artY + Math.sin(a) * artR, 3, 3);
+          }
+          // 中心宝石
+          noStroke();
+          fill(Math.floor(cr.r * 0.3), Math.floor(cr.g * 0.3), Math.floor(cr.b * 0.3));
+          ellipse(0, artY, 8, 8);
+          fill(cr.r, cr.g, cr.b, 100);
+          ellipse(0, artY, 4, 4);
+        }
+        // 关键词小图标
+        if (card.keywords && card.keywords.length > 0){
+          card.keywords.forEach((kw, ki) => {
+            let ky = artY + artR + 8 + ki * 6;
+            noStroke();
+            if (kw === '先攻'){
+              fill(cr.r, cr.g, cr.b, 200);
+              noStroke();
+              beginShape();
+              vertex(-3, ky - 6); vertex(1, ky - 1); vertex(-1, ky - 1);
+              vertex(3, ky + 6); vertex(-1, ky + 1); vertex(1, ky + 1);
+              endShape(CLOSE);
+            } else if (kw === '连击'){
+              noFill(); stroke(cr.r, cr.g, cr.b, 80); strokeWeight(1);
+              ellipse(-4, ky, 5, 5); ellipse(4, ky, 5, 5);
+            } else if (kw === '猛击'){
+              fill(cr.r, cr.g, cr.b, 80);
+              for (let r = 0; r < 4; r++){
+                let a = (r / 4) * Math.PI * 2;
+                ellipse(Math.cos(a) * 5, ky + Math.sin(a) * 3, 2, 2);
+              }
+            } else if (kw === '流转'){
+              noFill(); stroke(cr.r, cr.g, cr.b, 80); strokeWeight(1);
+              arc(0, ky, 8, 8, 0, Math.PI * 1.5);
+            } else if (kw === '震慑' || kw === '异常'){
+              fill(cr.r, cr.g, cr.b, 80);
+              if (kw === '震慑'){
+                push(); translate(0, ky); rotate(PI / 4); rect(-3, -3, 6, 6); pop();
+              } else {
+                ellipse(0, ky, 5, 5);
+              }
+            }
+          });
+          noStroke();
+        }
+        pop();
+        // 装饰角
+        fill(cr.r, cr.g, cr.b);
+        noStroke();
+        let cornerSize = 8;
+        [-1, 1].forEach(sx => {
+          [-1, 1].forEach(sy => {
+            ellipse(sx * (CARD_W / 2 - 10), sy * (CARD_H / 2 - 10), cornerSize, cornerSize);
+          });
+        });
+        // 费用
+        fill(cr.r, cr.g, cr.b);
+        noStroke();
+        ellipse(-CARD_W / 2 + 20, -CARD_H / 2 + 20, 26, 26);
+        fill(0);
+        textAlign(CENTER, CENTER);
+        textSize(16);
+        textStyle(BOLD);
+        text(c, -CARD_W / 2 + 20, -CARD_H / 2 + 20);
+        // 升级标记
+        if (card.upgraded){
+          cFill('goldBright');
+          textSize(10);
+          text('+', -CARD_W / 2 + 20, -CARD_H / 2 + 40);
+        }
+        // 名称
+        fill(cr.r, cr.g, cr.b);
+        textSize(12);
+        textStyle(BOLD);
+        let nameMaxW = CARD_W - 20;
+        let nameH = 16;
+        drawCenteredText(card.name || '???', 0, -CARD_H / 2 + 28, nameMaxW, nameH, 14);
+        // 类型
+        fill(cr.r, cr.g, cr.b);
+        textSize(9);
+        let typeText = card.type === 'attack' ? '攻击' : (card.type === 'skill' ? '技能' : '能力');
+        textAlign(CENTER, TOP);
+        text(typeText, 0, -CARD_H / 2 + 28 + nameH + 2);
+        // 分隔线
+        stroke(cr.r, cr.g, cr.b);
+        strokeWeight(0.5);
+        let sepY = -CARD_H / 2 + 28 + nameH + 18;
+        line(-CARD_W / 2 + 15, sepY, CARD_W / 2 - 15, sepY);
+        // 描述
+        let descSource = (card.upgraded && card.upgradedDesc) ? card.upgradedDesc : (card.desc || '');
+        let desc = descSource
+          .replace('{dmg}', card.baseDmg || 0)
+          .replace('{block}', card.baseBlock || 0);
+        if (card.comboBonus !== undefined) desc = desc.replace('{combo_bonus}', card.comboBonus);
+        if (card.comboBlock !== undefined) desc = desc.replace('{combo_block}', card.comboBlock);
+        if (card.comboScale !== undefined) desc = desc.replace('{combo_scale}', card.comboScale);
+        if (card.statusAmt !== undefined){
+          let effectiveAmt = getEffectiveStatusAmt(card);
+          desc = desc.replace('{burn}', effectiveAmt).replace('{freeze}', effectiveAmt).replace('{corrode}', effectiveAmt);
+        }
+        cFill('text');
+        textSize(9);
+        textStyle(NORMAL);
+        let hasKw = card.keywords && card.keywords.length > 0;
+        let descMaxH = hasKw ? (CARD_H / 2 - 30) - (sepY + 8) : (CARD_H / 2 - 12) - (sepY + 8);
+        descMaxH = Math.max(20, descMaxH);
+        drawCenteredText(desc, 0, sepY + 8, CARD_W - 20, descMaxH, 11);
+        // 关键词标签
+        if (hasKw){
+          let ky = CARD_H / 2 - 30;
+          noStroke();
+          card.keywords.forEach(kw => {
+            fill(cr.r, cr.g, cr.b);
+            textSize(10);
+            textStyle(BOLD);
+            text(kw, 0, ky);
+            ky += 12;
+          });
+        }
+        // 伪3D光泽（顶部 35% 静态白膜，与 V1.3 同基底）
+        fill(255, 8);
+        noStroke();
+        rect(-CARD_W / 2 + 8, -CARD_H / 2 + 8, CARD_W - 16, CARD_H * 0.35, 6);
+      } catch (e){
+        console.error('drawCardVisualModern error:', e, card);
+      } finally {
+        pop(); // 硬约束 #7：try/finally 保证矩阵栈平衡
+      }
+    }
+
+    // ============================================================
+    // M5 · V2.1 多层动态阴影（源码 L11909-11940，逐行原样）
+    // ============================================================
+    function drawCardShadow(x, y, liftAmount, cardScale, rotation){
+      push();
+      noStroke();
+      let s = cardScale || 1;
+      let rot = rotation || 0;
+      let liftFactor = clamp(liftAmount / 50, 0, 1);
+      let shadowScale = 1 + liftFactor * 0.05;
+      let baseAlpha = 60 - liftFactor * 20;
+      translate(x, y);
+      rotate(rot);
+      scale(s * shadowScale);
+      let layers = [
+        { offX:8 + liftFactor * 4, offY:16 + liftFactor * 8, alpha:15 - liftFactor * 5 },
+        { offX:6 + liftFactor * 3, offY:12 + liftFactor * 6, alpha:25 - liftFactor * 8 },
+        { offX:4 + liftFactor * 2, offY:8 + liftFactor * 4,  alpha:40 - liftFactor * 10 },
+      ];
+      layers.forEach(layer => {
+        fill(0, Math.max(5, layer.alpha));
+        rect(-CARD_W / 2 + layer.offX, -CARD_H / 2 + layer.offY, CARD_W, CARD_H, 10);
+      });
+      fill(0, baseAlpha);
+      rect(-CARD_W / 2 + 2, -CARD_H / 2 + 4, CARD_W, CARD_H, 10);
+      pop();
+    }
+
+    // ============================================================
+    // M6 · 伪 3D 透视倾斜三件套（源码 L16917-16958，逐行原样）
+    // ============================================================
+    // 刚体正交投影：R = Ry(tiltY)·Rx(tiltX) 取 (x,y) 屏幕投影
+    function applyCardTilt3D(tiltX, tiltY){
+      let cosY = Math.cos(tiltY), sinY = Math.sin(tiltY);
+      let cosX = Math.cos(tiltX), sinX = Math.sin(tiltX);
+      applyMatrix(cosY, 0, sinX * sinY, cosX, 0, 0);
+    }
+    // 受光高光：顶部白高光 → 35% 消失 → 底部压暗
+    function applyCardSheen3D(strength, tiltX, tiltY){
+      if (strength < 0.05) return;
+      let ctx = drawingContext;
+      ctx.save();
+      let topLight = clamp(-tiltX / 0.32, 0, 1) * 0.5 + 0.5;
+      let a = 70 * strength * topLight;
+      let grad = ctx.createLinearGradient(0, -CARD_H / 2, 0, CARD_H / 2);
+      grad.addColorStop(0,    'rgba(255,255,255,' + (a / 255).toFixed(3) + ')');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0)');
+      grad.addColorStop(1,    'rgba(0,0,0,'      + (40 * strength / 255).toFixed(3) + ')');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 10);
+      else ctx.rect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H);
+      ctx.fill();
+      ctx.restore();
+    }
+    // 鼠标相对卡心 → 倾角 + 方向阴影偏移（展厅内 mx()/my() 即本栏局部鼠标）
+    function computeCardTilt(ccx, ccy, cardScale, hoverEase){
+      const MAX_TILT = 0.32; // ~18°
+      let halfW = Math.max(1, (CARD_W * (cardScale || 1)) / 2);
+      let halfH = Math.max(1, (CARD_H * (cardScale || 1)) / 2);
+      let dx = clamp((mouseX - ccx) / halfW, -1, 1);
+      let dy = clamp((mouseY - ccy) / halfH, -1, 1);
+      let tiltX = -dy * MAX_TILT * hoverEase;
+      let tiltY =  dx * MAX_TILT * hoverEase;
+      let shadowOffX = -dx * 16 * hoverEase;
+      let shadowOffY = -dy *  8 * hoverEase;
+      return { tiltX, tiltY, shadowOffX, shadowOffY };
+    }
+
+    // ============================================================
+    // M7 · V2.1 镭射覆膜全量版（源码 L11942-12025，逐行原样）
+    // 约定：在卡牌局部变换内调用；cardCx/cy 为屏幕坐标仅供鼠标逆变换。
+    // ============================================================
+    function drawCardLaser(cardScale, cardCx, cardCy, cardRotation, isHovered){
+      push();
+      blendMode(ADD); // 加法混合：暗底发光材质的唯一正解
+      noStroke();
+      let s = cardScale || 1;
+      let hueSpeed = isHovered ? 1.0 : 0.5;   // 悬停 2 倍速
+      let baseHue = (frameCount * hueSpeed) % 360;
+      let brightBoost = isHovered ? 1.3 : 1.0; // 悬停亮度 +30%
+      // 鼠标逆变换：屏幕坐标 → 卡牌局部坐标（抵消旋转）
+      let dx = mouseX - cardCx;
+      let dy = mouseY - cardCy;
+      let cosR = Math.cos(-cardRotation), sinR = Math.sin(-cardRotation);
+      let localMx = dx * cosR - dy * sinR;
+      let localMy = dx * sinR + dy * cosR;
+      let mouseNormX = clamp(localMx / (CARD_W * s / 2), -1, 1);
+      let mouseNormY = clamp(localMy / (CARD_H * s / 2), -1, 1);
+      // 1. 对角线全息光带（鼠标沿对角线投影驱动）
+      let bandWidth = isHovered ? lerp(18, 22, 0.5) : lerp(10, 16, 0.5);
+      let bandPos = (mouseNormX + mouseNormY) * 0.5;
+      let pixSize = 4, gap = 1;
+      let cardW = CARD_W * s, cardH = CARD_H * s;
+      let bandCenter = bandPos * (cardW + cardH) * 0.25;
+      let bandHalfW = bandWidth;
+      colorMode(HSB, 360, 100, 100, 100);
+      // 2. 像素光栅衍射（4px 方块，200 块硬顶）
+      let pixCount = 0;
+      for (let py = -cardH / 2; py < cardH / 2; py += pixSize + gap){
+        for (let px = -cardW / 2; px < cardW / 2; px += pixSize + gap){
+          let proj = (px + py) * 0.5;
+          let perpDist = (px - py) * 0.707;
+          let distToBand = Math.abs(perpDist - bandCenter);
+          if (distToBand > bandHalfW) continue;
+          let bandAlpha = (1 - distToBand / bandHalfW) * 60 * brightBoost;
+          let hueOffset = noise(px * 0.1, py * 0.1, frameCount * 0.01) * 30;
+          let lengthHue = (proj * 0.5 + frameCount * hueSpeed * 0.3) % 360;
+          let finalHue = (baseHue + hueOffset + lengthHue) % 360;
+          fill(finalHue, 70, 90 * brightBoost, bandAlpha);
+          rect(px, py, pixSize, pixSize);
+          pixCount++;
+          if (pixCount >= 200) break;
+        }
+        if (pixCount >= 200) break;
+      }
+      // 3. 边缘虹彩描边（2 层互补色相）
+      let mouseDist = Math.sqrt(mouseNormX * mouseNormX + mouseNormY * mouseNormY);
+      let edgeHue = (baseHue + mouseDist * 60) % 360;
+      noFill();
+      for (let i = 0; i < 2; i++){
+        let h = (edgeHue + i * 60) % 360;
+        let a = 40 + Math.sin(frameCount * 0.05 + i) * 20;
+        stroke(h, 80, 100, a);
+        strokeWeight(2);
+        rect(-cardW / 2 + i, -cardH / 2 + i, cardW - i * 2, cardH - i * 2, 10 - i);
+      }
+      // 4. 噪点纹理（40 颗 Perlin 漂移彩噪，磨砂感）
+      noStroke();
+      let noiseOffset = frameCount * 0.5;
+      for (let i = 0; i < 40; i++){
+        let nx = noise(i * 0.3, noiseOffset * 0.01) * cardW - cardW / 2;
+        let ny = noise(i * 0.3 + 100, noiseOffset * 0.01) * cardH - cardH / 2;
+        let na = 15 + noise(i * 0.5, noiseOffset * 0.02) * 10;
+        fill((baseHue + i * 10) % 360, 50, 100, na);
+        rect(nx, ny, 2, 2);
+      }
+      colorMode(RGB, 255);
+      blendMode(BLEND); // 硬约束 #5：ADD 用完必复位
+      pop();
+    }
+
+    // ============================================================
+    // V2.0 初代镭射（虚拟过渡版）：自漂移多色粗斜线「凑」出一条光带
+    // 叙事定位：尚未抓取/参考网络成熟方案（像素光栅衍射、鼠标逆变换、Perlin 噪点、
+    //   虹彩描边都不存在），仅凭直觉做的升级——几根粗描边对角线沿法线自行漂移、
+    //   各自循环变色，裁剪在圆角卡面内。hover 时仅靠「多加两根线」加强，无任何交互驱动。
+    // 调用约定：在卡牌局部变换内调用（与 V2.1 同），粗线天然贴卡面几何。
+    // ============================================================
+    function drawLaserV2(isHovered){
+      push();
+      blendMode(ADD);
+      // 裁剪到圆角卡面：粗斜线两端超长，超出部分一律裁掉（朴素实现唯一的几何处理）
+      const ctx = drawingContext;
+      ctx.save();
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 10);
+      else ctx.rect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H);
+      ctx.clip();
+      colorMode(HSB, 360, 100, 100, 100);
+      const lineCount = isHovered ? 5 : 3;                       // hover 只多加两根线
+      const L = CARD_W + CARD_H;                                 // 线段半长，超出交裁剪
+      const drift = Math.sin(frameCount * 0.015) * (CARD_W + CARD_H) * 0.22; // 整组自漂移，不跟鼠标
+      for (let i = 0; i < lineCount; i++){
+        // 沿对角线法线 (1,-1)/√2 排开：中线最亮、两侧衰减，凑出「一条粗光带」的观感
+        const t = lineCount === 1 ? 0 : (i - (lineCount - 1) / 2) / ((lineCount - 1) / 2); // -1..1
+        const off = drift + t * 24;
+        const hue = (frameCount * 0.8 + i * (360 / lineCount)) % 360; // 每根线各自循环变色（多色）
+        const a = (isHovered ? 58 : 38) * (1 - 0.5 * Math.abs(t));
+        stroke(hue, 65, isHovered ? 100 : 90, a);
+        strokeWeight(11);
+        const nx = off * 0.707, ny = -off * 0.707;
+        line(-L + nx, -L + ny, L + nx, L + ny);
+      }
+      ctx.restore();
+      colorMode(RGB, 255);
+      blendMode(BLEND);
+      pop();
+    }
+
+    // 悬停金框（三版本共用外观；在卡牌局部变换内绘制）
+    function drawGoldFrame(){
+      noFill();
+      if (version === 13) stroke(COLORS.goldBright); // V1.3 原样：p5 直吃 hex 字符串
+      else cStroke('goldBright');
+      strokeWeight(2);
+      rect(-CARD_W / 2 - 3, -CARD_H / 2 - 3, CARD_W + 6, CARD_H + 6, 8);
+    }
+
+    // ============================================================
+    // V1.3 管线（源码 L2442-2497）：直线平铺 + 瞬变，两遍绘制
+    // ============================================================
+    function drawV13(){
+      // 第一遍：非悬停卡，scale(1) 静止
+      for (let i = 0; i < cards.length; i++){
+        const card = cards[i];
+        if (card === hoveredCard) continue;
+        const L = flatLayout(i);
+        push();
+        translate(L.cx, L.cy);
+        scale(1);
+        drawCardVisualV13(card, 0, 0, 1);
+        pop();
+      }
+      // 第二遍：悬停卡 —— 上提 25px + scale(1.12)，无任何过渡
+      if (hoveredCard){
+        const idx = cards.indexOf(hoveredCard);
+        if (idx >= 0){
+          const L = flatLayout(idx);
+          push();
+          translate(L.cx, L.cy - 25); // liftY = -25 写死
+          scale(1.12);
+          drawCardVisualV13(hoveredCard, 0, 0, 1);
+          if (canPlayCard(hoveredCard)) drawGoldFrame();
+          pop();
+        }
+      }
+    }
+
+    // ============================================================
+    // V2.0 管线（虚拟）：弧面 + dampApproach，进出同用 easeOutCubic
+    // ============================================================
+    function drawV20(){
+      const dt = deltaTime;
+      // 第一遍：非悬停卡
+      for (let i = 0; i < cards.length; i++){
+        const card = cards[i];
+        if (card === hoveredCard) continue;
+        const L = handLayout(i);
+        const st = getState(card);
+        st.hoverProgress = dampApproach(st.hoverProgress, 0, 0.25, dt);
+        const hoverEase = easeOutCubic(st.hoverProgress); // ← 进出同用，退出偏急
+        st.offsetY = dampApproach(st.offsetY, -40 * hoverEase, 0.3, dt);
+        st.scale   = dampApproach(st.scale, 1 + 0.15 * hoverEase, 0.3, dt);
+        // 弧面倾角 + 静态微旋转（无 sin 漂移），悬停归零
+        const targetRot = lerp(L.arcRot + st.microRot, 0, hoverEase);
+        st.rotation = dampApproach(st.rotation, targetRot, 0.3, dt);
+        // 单层矩形阴影（不感知高度，留在弧面基线处）
+        push();
+        noStroke();
+        translate(L.cx, L.cy);
+        rotate(st.rotation);
+        scale(st.scale);
+        fill(0, 55);
+        rect(-CARD_W / 2 + 2, -CARD_H / 2 + 4, CARD_W, CARD_H, 10);
+        pop();
+        // 卡体 + 初代镭射
+        push();
+        translate(L.cx, L.cy + st.offsetY);
+        rotate(st.rotation);
+        scale(st.scale);
+        drawCardVisualModern(card, 0, 0, 1);
+        if (isSpecialCard(card)) drawLaserV2(false);
+        pop();
+      }
+      // 第二遍：悬停卡置顶
+      if (hoveredCard){
+        const idx = cards.indexOf(hoveredCard);
+        if (idx >= 0){
+          const L = handLayout(idx);
+          const st = getState(hoveredCard);
+          st.hoverProgress = dampApproach(st.hoverProgress, 1, 0.25, dt);
+          const hoverEase = easeOutCubic(st.hoverProgress);
+          st.offsetY = dampApproach(st.offsetY, -40 * hoverEase, 0.3, dt);
+          st.scale   = dampApproach(st.scale, 1 + 0.15 * hoverEase, 0.3, dt);
+          st.rotation = dampApproach(st.rotation, 0, 0.3, dt);
+          push();
+          noStroke();
+          translate(L.cx, L.cy);
+          rotate(st.rotation);
+          scale(st.scale);
+          fill(0, 55);
+          rect(-CARD_W / 2 + 2, -CARD_H / 2 + 4, CARD_W, CARD_H, 10);
+          pop();
+          push();
+          translate(L.cx, L.cy + st.offsetY);
+          rotate(st.rotation);
+          scale(st.scale);
+          drawCardVisualModern(hoveredCard, 0, 0, 1);
+          if (isSpecialCard(hoveredCard)) drawLaserV2(true);
+          if (canPlayCard(hoveredCard)) drawGoldFrame();
+          pop();
+        }
+      }
+    }
+
+    // ============================================================
+    // V2.1 管线（源码 drawHand L12095-12204）：非对称缓动 + 3D + 全息覆膜
+    // ============================================================
+    function drawV21(){
+      const dt = deltaTime;
+      // 第一遍：非悬停卡 —— 退出用 easeInCubic（先慢后快，「放走」）
+      for (let i = 0; i < cards.length; i++){
+        const card = cards[i];
+        if (card === hoveredCard) continue;
+        const L = handLayout(i);
+        const st = getState(card);
+        st.hoverProgress = dampApproach(st.hoverProgress, 0, 0.25, dt);
+        // 生产防御：NaN 钳制，防止阻尼状态被永久污染
+        if (isNaN(st.hoverProgress) || st.hoverProgress < 0) st.hoverProgress = 0;
+        if (st.hoverProgress > 1) st.hoverProgress = 1;
+        const hoverEase = easeInCubic(st.hoverProgress);
+        st.offsetY = dampApproach(st.offsetY, -50 * hoverEase, 0.3, dt);
+        st.scale   = dampApproach(st.scale, 1 + 0.18 * hoverEase, 0.3, dt);
+        // 弧面倾角 + 静态微旋转 + sin 呼吸漂移，悬停归零
+        const microDrift = Math.sin(frameCount * 0.02 + st.microRotPhase) * 0.02;
+        const targetRot = lerp(L.arcRot + st.microRot + microDrift, 0, hoverEase);
+        st.rotation = dampApproach(st.rotation, targetRot, 0.3, dt);
+        drawCardShadow(L.cx, L.cy, Math.abs(st.offsetY), st.scale, st.rotation);
+        push();
+        translate(L.cx, L.cy + st.offsetY);
+        rotate(st.rotation);
+        scale(st.scale);
+        drawCardVisualModern(card, 0, 0, 1);
+        if (isSpecialCard(card)) drawCardLaser(1, L.cx, L.cy + st.offsetY, st.rotation, false);
+        pop();
+      }
+      // 第二遍：悬停卡 —— 进入用 easeOutCubic（先快后慢，「跟手」），最高渲染层
+      if (hoveredCard){
+        const idx = cards.indexOf(hoveredCard);
+        if (idx >= 0){
+          const L = handLayout(idx);
+          const st = getState(hoveredCard);
+          st.hoverProgress = dampApproach(st.hoverProgress, 1, 0.25, dt);
+          if (isNaN(st.hoverProgress) || st.hoverProgress < 0) st.hoverProgress = 0;
+          if (st.hoverProgress > 1) st.hoverProgress = 1;
+          const hoverEase = easeOutCubic(st.hoverProgress);
+          st.offsetY = dampApproach(st.offsetY, -50 * hoverEase, 0.3, dt);
+          st.scale   = dampApproach(st.scale, 1 + 0.18 * hoverEase, 0.3, dt);
+          st.rotation = dampApproach(st.rotation, 0, 0.3, dt);
+          // 鼠标驱动 3D 倾角 + 反向阴影
+          const tilt = computeCardTilt(L.cx, L.cy + st.offsetY, st.scale, hoverEase);
+          drawCardShadow(L.cx + tilt.shadowOffX, L.cy + tilt.shadowOffY,
+                         Math.abs(st.offsetY), st.scale, st.rotation);
+          push();
+          translate(L.cx, L.cy + st.offsetY);
+          rotate(st.rotation);
+          scale(st.scale);
+          applyCardTilt3D(tilt.tiltX, tilt.tiltY); // 必须在卡面之前施加
+          drawCardVisualModern(hoveredCard, 0, 0, 1);
+          applyCardSheen3D(hoverEase, tilt.tiltX, tilt.tiltY); // 必须在卡面之后叠加
+          if (isSpecialCard(hoveredCard)) drawCardLaser(1, L.cx, L.cy + st.offsetY, st.rotation, true);
+          if (canPlayCard(hoveredCard)) drawGoldFrame();
+          pop();
+        }
+      }
+    }
+
+    // ==================== 每帧入口 ====================
+    p.draw = () => {
+      // 同步帧变量（模拟全局模式同名全局）
+      frameCount = p.frameCount;
+      deltaTime = p.deltaTime || 16.67;
+      drawingContext = p.drawingContext;
+      // 仅当指针位于本栏画框内才响应；离开时鼠标归一化位置回到卡心，覆膜静态静置
+      pointerInside = (typeof p.mouseX === 'number' && !isNaN(p.mouseX)) &&
+        p.mouseX >= 0 && p.mouseX <= PW && p.mouseY >= 0 && p.mouseY <= PH;
+      mouseX = pointerInside ? p.mouseX : PW / 2;
+      mouseY = pointerInside ? p.mouseY : PH / 2;
+      // 帧首防御性复位（即便某条路径漏复位也不跨帧污染）
+      p.blendMode(p.BLEND);
+      p.colorMode(p.RGB, 255);
+      background(10, 10, 16);
+      // 桌面氛围：手牌下方一抹暗金椭圆，暗示「桌面」
+      noStroke();
+      fill(146, 112, 48, 9);
+      ellipse(PW / 2, BASE_Y + 112, 384, 74);
+      fill(146, 112, 48, 5);
+      ellipse(PW / 2, BASE_Y + 112, 300, 46);
+
+      // 命中检测每帧实时重算 → 再按版本走各自管线
+      if (version === 13){ recalcHover(false); drawV13(); }
+      else if (version === 20){ recalcHover(true); drawV20(); }
+      else { recalcHover(true); drawV21(); }
+    };
+  };
+}
+
+// -------------------- 启动三个彼此独立的 p5 实例 --------------------
+new p5(createHandSketch(13), document.getElementById('panel-v13'));
+new p5(createHandSketch(20), document.getElementById('panel-v20'));
+new p5(createHandSketch(21), document.getElementById('panel-v21'));
+</script>
+</body>
+</html>
